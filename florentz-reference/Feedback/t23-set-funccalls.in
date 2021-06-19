@@ -1,0 +1,46 @@
+//function calls
+set[1..5] numbersOfTheCounting() {
+    set [1..5] s1; 
+    s1 = s1 + 3;
+    return s1;
+}
+
+void getNumberOfCounting(set[1..5] numbers, int count) {
+    if (count in numbers) {
+        printi(count);
+        print("shall be the number thou shalt count, and the number of the counting shall be");
+        printi(count);
+    }
+}
+
+void shaltThouNotCount(set[1..5] numbers, int count) {
+    if (not (count in numbers)) {
+        printi(count);
+        print("shalt though not count");
+    }
+}
+
+void isRightOut(set[1..5] numbers, int count) {
+    if (not (count in numbers)) {
+        printi(count);
+        print("is right out!");
+    }
+}
+
+void printIfProceeds(set[1..5] numbers, int count) {
+    if ((not (count in numbers)) and count < 3) {
+        print("neither count thou");
+        printi(count);
+        print("excepting that thou then proceed to three");
+    }
+}
+
+void main() {
+    print("And now for something completely different:");
+    set [1..5] nums = numbersOfTheCounting();
+    getNumberOfCounting(nums, 3);
+    printIfProceeds(nums, 4); // shoudn't print anything
+    shaltThouNotCount(nums, 4);
+    printIfProceeds(nums, 2);
+    isRightOut(nums, 5); 
+}

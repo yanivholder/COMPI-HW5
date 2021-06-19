@@ -1,0 +1,342 @@
+%{
+    #include "hw3-output.hpp"
+    #include "sym_tables.hpp"
+    #include "structs.hpp"
+
+	using namespace output;
+
+    typedef enum ops {
+        PASSIGN,
+        PRELOP,
+        PAND,
+        POR,
+        PNOT,
+        PBINOP,
+    } ops;
+
+	extern int yylineno;
+	int yyerror(const char * message);
+    extern int yylex();
+    extern char* yytext;
+
+    Exp* do_op(Exp* var1, Exp* var2, ops op);
+    void vaildate_type(string x, string y);
+    FuncSymbol* get_func(string name, std::vector<string> type_list);
+    void validate_func(std::vector<string> expected, std::vector<string> current, string name);
+    void validate_assign(string var1, string var2);
+    string get_var_type(string var_name);
+
+    SymbolTable symbolTable = SymbolTable();
+    string curr_func_ret_type("");
+    string curr_exp_type("");
+    int during_while = 0;
+    int during_switch = 0;
+
+
+
+%}
+
+%token VOID
+%token INT
+%token BYTE
+%token B
+%token BOOL
+
+%token TRUE
+%token FALSE
+%token RETURN
+%token IF
+
+%token WHILE
+%token BREAK
+%token CONTINUE
+%token SWITCH
+%token CASE
+%token DEFAULT
+%token COLON
+%token SC
+%token COMMA
+
+%token LBRACE
+%token RBRACE
+
+%token ID
+%token NUM
+%token STRING
+
+%right ASSIGN
+
+%left OR
+%left AND
+
+%left RELOP_EQ
+%nonassoc RELOP_REL
+
+%left BINOP_ADD
+%left BINOP_MUL
+
+%right NOT
+
+%nonassoc RPAREN
+%nonassoc LPAREN
+%nonassoc ELSE
+
+%type<exp> Exp;
+%type<exp> Type;
+%type<exp> RetType;
+%type<funcArgsList> FormalsList;
+%type<funcArgsList> Formals;
+%type<funcArg> FormalDecl;
+%type<typeList> ExpList;
+%type<exp> Call;
+%type<id> ID;
+%type<exp> NUM;
+
+%%
+
+
+Program     :   Funcs                                                       { symbolTable.close_global_scope(); }
+
+Funcs       :   /* epsilon */                                               {
+                                                                                if(string(yytext) != "") {
+                                                                                    yyerror(nullptr);
+                                                                                }
+                                                                            }
+            |   FuncDecl Funcs                                              { }
+
+FuncDecl    :   RetType ID LPAREN Formals RPAREN                            { symbolTable.add_func_symbol($2->m_name, $1->m_type, $4->m_argsList); }
+
+                LBRACE                                                      {
+                                                                              symbolTable.open_scope();
+                                                                              curr_func_ret_type = $1->m_type;
+                                                                              symbolTable.add_func_args($4->m_argsList);
+                                                                            }
+
+                Statements RBRACE                                           {
+                                                                                curr_func_ret_type = "";
+                                                                                symbolTable.close_scope();
+                                                                            }
+
+RetType     :   Type                                                        { $$ = new Exp($1->m_type); }
+            |   VOID                                                        { $$ = new Exp("VOID"); }
+
+Formals     :   FormalsList                                                 { $$->m_argsList = $1->m_argsList; }
+            |   /* epsilon */                                               { $$ = new FuncArgsList(); }
+
+FormalsList     :   FormalDecl                                              {
+                                                                              $$ = new FuncArgsList();
+                                                                              $$->m_argsList.push_back($1->m_arg);
+                                                                            }
+                |   FormalDecl COMMA FormalsList                            {
+                                                                                $$ = new FuncArgsList();
+                                                                                $$->m_argsList = $3->m_argsList;
+                                                                                $$->m_argsList.push_back($1->m_arg);
+                                                                            }
+
+FormalDecl      : Type ID                                                   { $$ = new FuncArg($1->m_type, $2->m_name); }
+
+Statements      :   Statement                                               { }
+                |   Statements Statement                                    { }
+
+Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           { }
+                |   Type ID SC                                              { symbolTable.add_var_symbol($2->m_name, $1->m_type); }
+                |   Type ID ASSIGN Exp SC                                   {
+                                                                                validate_assign($1->m_type, $4->m_type);
+                                                                                symbolTable.add_var_symbol($2->m_name, $1->m_type);
+                                                                            }
+                |   ID ASSIGN Exp SC                                        {
+                                                                                string type = get_var_type($1->m_name);
+                                                                                validate_assign(type, $3->m_type);
+                                                                            }
+                |   Call SC                                                 { }
+                |   RETURN SC                                               { vaildate_type(curr_func_ret_type, "VOID"); }
+                |   RETURN Exp SC                                           { validate_assign(curr_func_ret_type, $2->m_type); }
+                |   IF LPAREN Exp RPAREN mark OpenScope Statement CloseScope
+                |   IF LPAREN Exp RPAREN mark OpenScope Statement CloseScope
+                ELSE OpenScope Statement CloseScope
+                |   WHILE LPAREN Exp RPAREN                                 {
+                                                                                vaildate_type($3->m_type, "BOOL");
+                                                                                during_while++;
+                                                                                symbolTable.open_scope(); }
+                    Statement                                               {
+                                                                                symbolTable.close_scope();
+                                                                                during_while--;
+                                                                            }
+                |   BREAK SC                                                {   if(!during_while && !during_switch) {errorUnexpectedBreak(yylineno); exit(1);} }
+                |   CONTINUE SC                                             {   if(!during_while) {errorUnexpectedContinue(yylineno); exit(1);} }
+                |   SWITCH LPAREN Exp RPAREN                                {
+                                                                                validate_assign("INT", $3->m_type);
+                                                                                during_switch++;
+                                                                            }
+                    LBRACE OpenScope CaseList RBRACE CloseScope             {   during_switch--; }
+
+mark        : { vaildate_type(curr_exp_type, "BOOL"); }
+
+
+Call        :   ID LPAREN ExpList RPAREN                                    {
+                                                                                FuncSymbol* f = get_func($1->m_name, $3->m_typeList);
+                                                                                $$ = new Exp(f->return_type);
+                                                                            }
+            |   ID LPAREN RPAREN                                            {
+                                                                                FuncSymbol* f = get_func($1->m_name, std::vector<string>());
+                                                                                $$ = new Exp(f->return_type);
+                                                                            }
+
+ExpList     :   Exp                                                         {
+                                                                              $$ = new TypeList();
+                                                                              $$->m_typeList.push_back($1->m_type);
+                                                                            }
+            |   Exp COMMA ExpList                                           {
+                                                                                $$ = new TypeList();
+                                                                                $$->m_typeList = $3->m_typeList;
+                                                                                $$->m_typeList.push_back($1->m_type);
+                                                                            }
+
+Type        :   INT                                                         { $$ = new Exp("INT"); }
+            |   BYTE                                                        { $$ = new Exp("BYTE"); }
+            |   BOOL                                                        { $$ = new Exp("BOOL"); }
+
+Exp         :   LPAREN Exp RPAREN                                           { $$ = new Exp($2->m_type); curr_exp_type = "INT"; }
+            |   Exp BINOP_ADD Exp                                           { $$ = do_op($1, $3, PBINOP); curr_exp_type = "INT"; }
+            |   Exp BINOP_MUL Exp                                           { $$ = do_op($1, $3, PBINOP); curr_exp_type = "INT"; }
+            |   ID                                                          {
+                                                                              string type = get_var_type($1->m_name);
+                                                                              $$ = new Exp(type);
+                                                                              $$->m_varName = $1->m_name;
+                                                                              curr_exp_type = type;
+                                                                            }
+            |   Call                                                        { $$ = new Exp($1->m_type); curr_exp_type = $1->m_type; }
+            |   NUM                                                         { $$ = new Exp("INT"); curr_exp_type = "INT"; }
+            |   NUM B                                                       {
+                                                                                if (yylval.val > 255) {
+                                                                                    errorByteTooLarge(yylineno, to_string(yylval.val));
+                                                                                    exit(1);
+                                                                                }
+                                                                                $$ = new Exp("BYTE");
+                                                                                curr_exp_type = "BYTE";
+                                                                            }
+            |   STRING                                                      { $$ = new Exp("STRING"); curr_exp_type = "STRING";}
+            |   TRUE                                                        { $$ = new Exp("BOOL"); curr_exp_type = "BOOL"; }
+            |   FALSE                                                       { $$ = new Exp("BOOL"); curr_exp_type = "BOOL"; }
+            |   NOT Exp                                                     { $$ = do_op($2, $2, PNOT); curr_exp_type = "BOOL"; }
+            |   Exp AND Exp                                                 { $$ = do_op($1, $3, PAND); curr_exp_type = "BOOL"; }
+            |   Exp OR Exp                                                  { $$ = do_op($1, $3, POR); curr_exp_type = "BOOL"; }
+            |   Exp RELOP_EQ Exp                                            { $$ = do_op($1, $3, PRELOP); curr_exp_type = "BOOL"; }
+            |   Exp RELOP_REL Exp                                           { $$ = do_op($1, $3, PRELOP); curr_exp_type = "BOOL"; }
+
+CaseList         :   CaseDecl CaseList                                      { }
+                 |   CaseDecl                                               { }
+                 |   DEFAULT COLON Statements                               { }
+
+CaseDecl        :   CASE NUM COLON Statements                               { }
+
+OpenScope   :   /* epsilon */                                               { symbolTable.open_scope(); }
+
+CloseScope  :   /* epsilon */                                               { symbolTable.close_scope(); }
+
+
+%%
+
+int main() {
+	return yyparse();
+}
+
+int yyerror(const char* message) {
+	errorSyn(yylineno);
+	exit(1);
+}
+
+bool is_number(Exp* var) {
+    if (var->m_type == "INT" || var->m_type == "BYTE")
+        return true;
+    else
+        return false;
+}
+
+void validate_assign(string var1, string var2) {
+
+    if(var1 == "VOID" || !(var1 == var2 || (var1 == "INT" && var2 == "BYTE"))) {
+        errorMismatch(yylineno);
+        exit(1);
+    }
+}
+
+string get_var_type(string var_name) {
+    VarSymbol* var = (VarSymbol*)symbolTable.search_symbol(var_name, false);
+    if(var == nullptr) {
+        errorUndef(yylineno, var_name);
+        exit(1);
+    }
+    return var->type;
+}
+
+Exp* do_op(Exp* var1, Exp* var2, ops op) {
+    if(var1->m_type == "STRING" || var2->m_type == "STRING") {
+        goto err;
+    }
+    switch(op){
+        case(PASSIGN):
+            validate_assign(var1->m_type, var2->m_type);
+            return var1;
+
+        case(PRELOP):
+            if (is_number(var1) && is_number(var2))
+                return new Exp("BOOL");
+            break;
+
+         case(PAND): case(POR):
+            if (var1->m_type == "BOOL" && var2->m_type == "BOOL")
+                return new Exp("BOOL");
+            break;
+
+        case(PNOT):
+            if (var1->m_type == "BOOL")
+                return new Exp("BOOL");
+            break;
+
+        case(PBINOP):
+            if (is_number(var1) && is_number(var2)){
+                if(var1->m_type == "INT" || var2->m_type == "INT")
+                    return new Exp("INT");
+                else
+                    return new Exp("BYTE");
+            }
+            break;
+    }
+err:
+    errorMismatch(yylineno);
+    exit(1);
+}
+
+void vaildate_type(string x, string y){
+    if (x != y)
+    {
+        output::errorMismatch(yylineno);
+        exit(0);
+    }
+}
+
+FuncSymbol* get_func(string name, std::vector<string> type_list){
+    FuncSymbol* f = (FuncSymbol*)(symbolTable.search_symbol(name, true));
+    if (f == nullptr) {
+        errorUndefFunc(yylineno, name);
+        exit(0);
+    }
+    validate_func(f->args_type, type_list, f->name);
+    return f;
+}
+
+void validate_func(std::vector<string> expected, std::vector<string> current, string name) {
+    if (expected.size() != current.size())
+    {
+        errorPrototypeMismatch(yylineno, name, expected);
+        exit(1);
+    }
+    int size = expected.size();
+    for(int i=0; i < size; i++){
+        if(expected[i] != current[size-i-1] && !(expected[i] == "INT" && current[size-i-1] == "BYTE")){
+            errorPrototypeMismatch(yylineno, name, expected);
+            exit(1);
+        }
+    }
+}

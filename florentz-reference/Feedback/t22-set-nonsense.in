@@ -1,0 +1,25 @@
+void main() {
+    set[1..111] s1;
+    set[2..115] s2;
+    set[9..12] s3;
+
+    s2 = s1 + 3;
+    s3 = s2;
+
+    printi((int) s1);
+    printi((int) s2);
+
+    printi((int) (s2 + 4));
+    printi((int) (s2 + 9));
+    printi((int) ((s2 + 4) + 9));
+
+    set[1..240] s4;
+
+    int i = 1;
+
+    while (i < 240) {
+        s4 = s4 + i;
+        i = i + 1;
+        printi((int) s4);
+    }
+}

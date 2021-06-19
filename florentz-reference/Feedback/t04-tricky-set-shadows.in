@@ -1,0 +1,19 @@
+void main() {
+    set[1..5] s1;
+    set[2..115] s2;
+    set[9..12] s3;
+
+    s2 = s1 + 3;
+    s3 = s2;
+    printi((int) s1);
+    printi((int) s2);
+
+    if (3 in s1) print("3 in s1??? This is WRONG!");
+    if (3 in s2) print("3 in s2. GOOD.");
+    if (3 in s3) print("3 in s3. GOOD.");
+
+    if (88 in s2) print("you really whiffed");
+    else print("you missed the range :(. This was out of range and the attempted read should've thrown an error");
+
+    print("you shouldn't reach this point");
+}

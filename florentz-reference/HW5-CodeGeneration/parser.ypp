@@ -1,0 +1,850 @@
+%{
+	#include "hw3_output.hpp"
+	#include <iostream>
+	#include "symbol_table.h"
+	#include "structures.h"
+	#include "bp.hpp"
+	#include "var_generator.h"
+	#include "utils.h"
+
+	extern int yylineno;
+      extern char* yytext;
+      extern int yyleng;
+      extern int yylex();
+      using namespace std;
+
+      int yyerror(const char* message);
+      Exp* validateBinBool(Exp* type1, Exp* type2);
+      Exp* validateIn (Exp* type1, Exp* type2);
+      Exp* validateRelop (Exp* type1, Exp* type2);
+      Exp* validateBool(Exp* origExp);
+      Exp* validateAdd(Exp* type1, Exp* type2);
+      Exp* validateMul(Exp* type1, Exp* type2);
+      void declarePrerequisites();
+
+    SymbolTable symbolTable = SymbolTable();
+    VarGenerator varGenerator = VarGenerator();
+    CodeBuffer& buffer = CodeBuffer::instance();
+    int inWhile = 0;
+    string currRetType;
+    string fp;
+    int argsAmount;
+%}
+
+%token VOID
+%token INT
+%token BYTE
+%token B
+%token BOOL
+%token TRUE
+%token FALSE
+%token RETURN
+%token DOTS
+%token SET
+%nonassoc IF
+%nonassoc ELSE
+%token WHILE
+%token BREAK
+%token CONTINUE
+%token SC
+%token COMMA
+%token ID
+%token NUM
+%token STRING
+%token COMMENT
+%right ASSIGN
+%left OR
+%left AND
+%left EQUALS NOT_EQUALS
+%left IN
+%nonassoc LT GT LTE GTE
+%left ADDBINOP SUBBINOP
+%left MULBINOP DIVBINOP
+%right NOT
+%left RBRACE
+%left LBRACE
+%left RPAREN
+%left LPAREN
+%left RBRACKET
+%left LBRACKET
+
+%type<exp> Exp;
+%type<exp> Type;
+%type<exp> RetType;
+%type<funcArgsList> FormalsList;
+%type<funcArgsList> Formals;
+%type<funcArg> FormalDecl;
+%type<expList> ExpList;
+%type<exp> Call;
+%type<id> ID;
+%type<exp> NUM_WITH_VAL;
+%type<label> M;
+%type<block> N;
+%type<block> Statement;
+%type<block> Statements;
+%type<scope> IfScope;
+%type<scope> ElseScope;
+
+
+%%
+
+
+Program:              { declarePrerequisites(); } Funcs
+                                                                                { symbolTable.closeGlobalScope();}
+Funcs:                /* epsilon */
+                                                                                { }
+                      | FuncDecl Funcs
+                                                                                { }
+FuncDecl:             RetType ID LPAREN Formals RPAREN
+                                                                                { symbolTable.insertFuncSymbol($2->m_name, $1->m_type, $4->m_argsList); }
+                      LBRACE
+                                                                                {
+                                                                                     currRetType = $1->m_type;
+                                                                                     symbolTable.openScope();
+                                                                                     symbolTable.initScopeArgs($4->m_argsList);
+                                                                                     argsAmount = $4->m_argsList.size();
+
+                                                                                     vector<string> argTypes = vector<string>();
+                                                                                     for (auto & arg : $4->m_argsList)
+                                                                                        argTypes.push_back(arg.first);
+                                                                                     auto funcSym = symbolTable.findFuncSymbol($2->m_name, argTypes);
+
+                                                                                     buffer.emit("define " + funcSym->m_irRetType + " @" + $2->m_name + funcSym->m_irArgTypes + " {");
+
+                                                                                     fp = varGenerator.freshVar();
+                                                                                     buffer.emit(fp + " = alloca [" + to_string(50 + argsAmount) + " x i32]");
+
+                                                                                     for (int i = 0; i < argsAmount; i++) {
+                                                                                        string index = to_string(argsAmount - i - 1);
+                                                                                        string reg = "%" + to_string(i);
+                                                                                        string ptr = varGenerator.freshVar();
+                                                                                        buffer.emit(ptr + " = getelementptr [" + to_string(50 + argsAmount) + " x i32], [" + to_string(50 + argsAmount) + " x i32]* " + fp + ", i32 0, i32 " + index);
+                                                                                        buffer.emit("store i32 " + reg + ", i32* " + ptr);
+                                                                                     }
+                                                                                 }
+                      Statements RBRACE
+                                                                                {
+                                                                                    symbolTable.closeScope();
+                                                                                    if ($1->m_type == "VOID") {
+                                                                                        buffer.emit("ret void");
+                                                                                    } else {
+                                                                                        string retVal = varGenerator.freshVar();
+                                                                                        buffer.emit(retVal + " = add i32 0, 0");
+                                                                                        buffer.emit("ret i32" + retVal);
+                                                                                    }
+                                                                                    buffer.emit("}");
+                                                                                }
+
+RetType:              Type
+                                                                                { $$ = new Exp($1->m_type); }
+                      | VOID
+                                                                                { $$ = new Exp("VOID"); }
+
+Formals:              /* epsilon */
+                                                                                { $$ = new FuncArgsList(); }
+                      | FormalsList
+                                                                                { $$->m_argsList = $1->m_argsList; }
+
+FormalsList:          FormalDecl
+                                                                                {
+                                                                                  $$ = new FuncArgsList();
+                                                                                  $$->m_argsList.push_back($1->m_arg);
+                                                                                }
+                      |FormalsList  COMMA  FormalDecl
+                                                                                { $1->m_argsList.push_back($3->m_arg); }
+
+FormalDecl:           Type ID
+                                                                                { $$ = new FuncArg($1->m_type, $2->m_name); }
+IfScope:              IF LPAREN Exp RPAREN M
+                                                                                {
+                                                                                  if ($3->m_type != "BOOL") {
+                                                                                     output::errorMismatch(yylineno);
+                                                                                     exit(0);
+                                                                                  }
+                                                                                }
+                      OpenScope Statement CloseScope
+                                                                                {
+                                                                                  $$ = new Scope($3, $5->m_label, $8->m_nextList, $8->m_breakList, $8->m_continueList);
+                                                                                }
+ElseScope:            ELSE N M OpenScope Statement CloseScope
+                                                                                { $$ = new Scope(nullptr, $3->m_label, buffer.merge($2->m_nextList, $5->m_nextList), buffer.merge($2->m_breakList, $5->m_breakList), buffer.merge($2->m_continueList, $5->m_continueList)); }
+OpenScope:           /* epsilon */
+                                                                                { symbolTable.openScope(); }
+
+CloseScope:          /* epsilon */
+                                                                                { symbolTable.closeScope(); }
+M:                    /* epsilon */
+                                                                                { $$ = new Label(buffer.genLabel()); }
+N:                    /* epsilon */
+                                                                                {
+                                                                                  int address = buffer.emit("br label @");
+                                                                                  $$ = new Block();
+                                                                                  $$->m_nextList = buffer.makelist({address, FIRST});
+                                                                                }
+
+Statements:           Statement
+                                                                                {
+                                                                                    $$ = new Block();
+                                                                                    $$->m_nextList = $1->m_nextList;
+                                                                                    $$->m_breakList = $1->m_breakList;
+                                                                                    $$->m_continueList = $1->m_continueList;
+                                                                                }
+                      | Statements Statement
+                                                                                {
+                                                                                    $$ = new Block();
+                                                                                    $$->m_nextList = buffer.merge($1->m_nextList, $2->m_nextList);
+                                                                                    $$->m_breakList = buffer.merge($1->m_breakList, $2->m_breakList);
+                                                                                    $$->m_continueList = buffer.merge($1->m_continueList, $2->m_continueList);
+                                                                                }
+
+Statement:            LBRACE OpenScope Statements RBRACE CloseScope
+                                                                                {
+                                                                                    $$ = new Block();
+                                                                                    $$->m_nextList = $3->m_nextList;
+                                                                                    $$->m_breakList = $3->m_breakList;
+                                                                                    $$->m_continueList = $3->m_continueList;
+                                                                                }
+                      | Type ID SC                                              {
+                                                                                  if($1 ->m_type == "SET") {
+                                                                                    makeSet($1, $1->from, $1->to, buffer, varGenerator);
+                                                                                }
+
+                                                                                  symbolTable.insertSymbol($2->m_name, $1->m_type);
+                                                                                  string offset = to_string(symbolTable.findSymbol($2->m_name)->m_offset + argsAmount);
+                                                                                  string ptr = varGenerator.freshVar();
+
+                                                                                  buffer.emit(ptr + " = getelementptr [" + to_string(50 + argsAmount) + " x i32], [" + to_string(50 + argsAmount) + " x i32]* " + fp + ", i32 0, i32 " + offset);
+                                                                                  if($1->m_type == "SET"){
+                                                                                    buffer.emit("store i32 "+ $1->m_reg + ", i32* " + ptr);
+                                                                                  }
+                                                                                  else{
+                                                                                    buffer.emit("store i32 0, i32* " + ptr);
+                                                                                  }
+                                                                                  $$ = new Block();
+                                                                                }
+
+                      | Type ID ASSIGN Exp SC                                   {
+                                                                                    if ($1->m_type == $4->m_type || ($1->m_type == "INT" && $4->m_type == "BYTE")) {
+                                                                                        symbolTable.insertSymbol($2->m_name, $1->m_type);
+                                                                                    } else {
+                                                                                        output::errorMismatch(yylineno);
+                                                                                        exit(0);
+                                                                                    }
+
+                                                                                    if ($1->m_type == "BOOL") {
+                                                                                        createIntersection($4, buffer, varGenerator);
+                                                                                    }
+
+                                                                                  string offset = to_string(symbolTable.findSymbol($2->m_name)->m_offset + argsAmount);
+                                                                                  string ptr = varGenerator.freshVar();
+
+                                                                                  buffer.emit(ptr + " = getelementptr [" + to_string(50 + argsAmount) + " x i32], [" + to_string(50 + argsAmount) + " x i32]* " + fp + ", i32 0, i32 " + offset);
+                                                                                  if($4->m_type == "SET"){
+                                                                                     string temp = varGenerator.freshVar();
+                                                                                     copySet(temp, $4->m_reg, buffer, varGenerator);
+                                                                                     buffer.emit("store i32 " + temp + ", i32* " + ptr);
+                                                                                  }
+                                                                                  else{
+                                                                                    buffer.emit("store i32 " + $4->m_reg + ", i32* " + ptr);
+                                                                                  }
+                                                                                  $$ = new Block();
+
+                                                                                }
+                      | ID ASSIGN Exp SC
+                                                                                {
+                                                                                    string type = symbolTable.findSymbol($1->m_name)->m_type;
+                                                                                    if (!(type == $3->m_type || (type == "INT" && $3->m_type == "BYTE"))) {
+                                                                                          output::errorMismatch(yylineno);
+                                                                                          exit(0);
+                                                                                    }
+
+                                                                                    if (type == "BOOL") {
+                                                                                        createIntersection($3, buffer, varGenerator);
+                                                                                    }
+                                                                                  string offset = to_string(symbolTable.findSymbol($1->m_name)->m_offset + argsAmount);
+                                                                                  string ptr = varGenerator.freshVar();
+
+                                                                                  buffer.emit(ptr + " = getelementptr [" + to_string(50 + argsAmount) + " x i32], [" + to_string(50 + argsAmount) + " x i32]* " + fp + ", i32 0, i32 " + offset);
+                                                                                  if($3->m_type == "SET"){
+                                                                                    string temp = varGenerator.freshVar();
+                                                                                    copySet(temp, $3->m_reg, buffer, varGenerator);
+                                                                                    buffer.emit("store i32 " + temp + ", i32* " + ptr);
+                                                                                    //if($1-> m_name == $3->m_name) {
+                                                                                        //string srcCastPointer = varGenerator.freshVar();
+                                                                                        //buffer.emit(srcCastPointer + " = inttoptr i32 " + $3->m_reg + " to i8*");
+                                                                                        //buffer.emit("call void @free(i8* " +  srcCastPointer+ ")");
+
+                                                                                    // }
+                                                                                  }
+                                                                                  else{
+                                                                                    buffer.emit("store i32 " + $3->m_reg + ", i32* " + ptr);
+                                                                                  }
+                                                                                  $$ = new Block();
+                                                                                }
+                      | Call SC
+                                                                               {
+                                                                                    $$ = new Block();
+                                                                                    if ($1->m_type == "BOOL") {
+                                                                                        string nextLabel = buffer.genLabel();
+                                                                                        buffer.bpatch($1->m_trueList, nextLabel);
+                                                                                        buffer.bpatch($1->m_falseList, nextLabel);
+                                                                                    }
+
+                                                                               }
+                      | RETURN SC
+                                                                                {
+                                                                                  if (currRetType != "VOID") {
+                                                                                    output::errorMismatch(yylineno);
+                                                                                    exit(0);
+                                                                                   }
+                                                                                   retVoid(buffer);
+                                                                                   $$ = new Block();
+                                                                                }
+                      | RETURN Exp SC
+                                                                                {
+                                                                                  if(currRetType == "VOID" || !(currRetType == $2->m_type || (currRetType == "INT" && $2->m_type == "BYTE"))){
+                                                                                     output::errorMismatch(yylineno);
+                                                                                     exit(0);
+                                                                                  }
+
+                                                                                  if (currRetType == "BOOL") {
+                                                                                    createIntersection($2, buffer, varGenerator);
+                                                                                  }
+                                                                                  retVal(buffer, $2->m_reg);
+                                                                                  $$ = new Block();
+                                                                                }
+                      | IfScope %prec IF
+                                                                                {
+                                                                                  buffer.bpatch($1->m_exp->m_trueList, $1->m_label);
+                                                                                  $$ = new Block();
+                                                                                  $$->m_breakList = $1->m_block->m_breakList;
+                                                                                  $$->m_continueList = $1->m_block->m_continueList;
+                                                                                  $$->m_nextList = buffer.merge($1->m_exp->m_falseList, $1->m_block->m_nextList);
+                                                                                  int address = buffer.emit("br label @");
+                                                                                  $$->m_nextList = buffer.merge($$->m_nextList, buffer.makelist({address, FIRST}));
+                                                                                  string label = buffer.genLabel();
+                                                                                  buffer.bpatch($$->m_nextList, label);
+                                                                                }
+                      | IfScope ElseScope
+                                                                                {
+                                                                                   buffer.bpatch($1->m_exp->m_falseList, $2->m_label);
+                                                                                   buffer.bpatch($1->m_exp->m_trueList, $1->m_label);
+
+                                                                                   $$ = new Block();
+                                                                                   $$->m_breakList = buffer.merge($1->m_block->m_breakList, $2->m_block->m_breakList);
+                                                                                   $$->m_continueList = buffer.merge($1->m_block->m_continueList, $2->m_block->m_continueList);
+                                                                                   $$->m_nextList = buffer.merge($1->m_block->m_nextList, $2->m_block->m_nextList);
+                                                                                   int address = buffer.emit("br label @");
+                                                                                   $$->m_nextList = buffer.merge($$->m_nextList, buffer.makelist({address, FIRST}));
+                                                                                   string label = buffer.genLabel();
+                                                                                   buffer.bpatch($$->m_nextList, label);
+                                                                                }
+                      | WHILE N M LPAREN Exp RPAREN
+                                                                                {
+                                                                                   if ($5->m_type != "BOOL") {
+                                                                                      output::errorMismatch(yylineno);
+                                                                                      exit(0);
+                                                                                   }
+                                                                                   symbolTable.openScope();
+                                                                                   inWhile++;
+                                                                                }
+                        M Statement
+                                                                                {
+                                                                                   symbolTable.closeScope();
+                                                                                   inWhile--;
+
+                                                                                   buffer.bpatch($9->m_continueList, $3->m_label);
+                                                                                   buffer.bpatch($5->m_trueList, $8->m_label);
+                                                                                   buffer.bpatch($2->m_nextList, $3->m_label);
+                                                                                   buffer.bpatch($9->m_nextList, $3->m_label);
+
+                                                                                   buffer.emit("br label %" + $3->m_label);
+                                                                                   string label = buffer.genLabel();
+                                                                                   buffer.bpatch($9->m_breakList, label);
+                                                                                   buffer.bpatch($5->m_falseList, label);
+                                                                                   $$ = new Block();
+                                                                                 }
+                      | BREAK SC
+                                                                                {
+                                                                                    if (!inWhile) {
+                                                                                       output::errorUnexpectedBreak(yylineno);
+                                                                                       exit(0);
+                                                                                    }
+                                                                                    $$ = new Block();
+                                                                                    int address = buffer.emit("br label @");
+                                                                                    $$->m_breakList = buffer.makelist({address, FIRST});
+                                                                                }
+                      | CONTINUE SC
+                                                                                {
+                                                                                    if (!inWhile) {
+                                                                                       output::errorUnexpectedContinue(yylineno);
+                                                                                       exit(0);
+                                                                                    }
+                                                                                    $$ = new Block();
+                                                                                    int address = buffer.emit("br label @");
+                                                                                    $$->m_continueList = buffer.makelist({address, FIRST});
+                                                                                 }
+Call:                 ID LPAREN ExpList RPAREN
+                                                                                {
+                                                                                  auto funcSym = symbolTable.findFuncSymbol($1->m_name, $3->m_typeList);
+                                                                                  $$ = new Exp(funcSym->m_retType);
+                                                                                  if ($1->m_name == "print") {
+                                                                                    auto strExp = $3->m_exp.at(0);
+                                                                                    buffer.emit("call void @print(i8* getelementptr ([" + strExp->m_size + " x i8], [" + strExp->m_size + " x i8]* " + strExp->m_reg + ", i32 0, i32 0))");
+                                                                                  } else {
+                                                                                      string callString = "";
+                                                                                      if(funcSym->m_retType != "VOID") {
+                                                                                        $$->m_reg = varGenerator.freshVar();
+                                                                                        callString += $$->m_reg + " = ";
+                                                                                      }
+                                                                                      callString += "call " + funcSym->m_irRetType + " " + funcSym->m_irArgTypes + " @" + $1->m_name + "(";
+                                                                                      if (!$3->m_exp.empty()) {
+                                                                                        callString += "i32 " + $3->m_exp.at(0)->m_reg;
+                                                                                        for (unsigned long i=1; i < $3->m_exp.size(); i++) {
+                                                                                            callString += ", i32 " + $3->m_exp.at(i)->m_reg;
+                                                                                        }
+                                                                                      }
+                                                                                      callString += ")";
+                                                                                      buffer.emit(callString);
+
+                                                                                      if (funcSym->m_retType == "BOOL") {
+                                                                                        string cond = varGenerator.freshVar();
+                                                                                        buffer.emit(cond + " = icmp ne i32 0, " + $$->m_reg);
+                                                                                        int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                        $$->m_trueList = buffer.merge($$->m_trueList, buffer.makelist({address, FIRST}));
+                                                                                        $$->m_falseList = buffer.merge($$->m_falseList, buffer.makelist({address, SECOND}));
+                                                                                      }
+                                                                                  }
+                                                                                }
+                      | ID LPAREN RPAREN
+                                                                                {
+                                                                                  vector<string> v = vector<string>();
+                                                                                  auto functionSymbol = symbolTable.findFuncSymbol($1->m_name, v);
+                                                                                  $$ = new Exp(functionSymbol->m_retType);
+                                                                                  string callString = "";
+                                                                                  if(functionSymbol->m_retType != "VOID") {
+                                                                                    $$->m_reg = varGenerator.freshVar();
+                                                                                    callString += $$->m_reg + " = ";
+                                                                                  }
+                                                                                  callString += "call " + functionSymbol->m_irRetType + " " + functionSymbol->m_irArgTypes + " @" + $1->m_name + "()";
+                                                                                  buffer.emit(callString);
+
+                                                                                  if (functionSymbol->m_retType == "BOOL") {
+                                                                                    string cond = varGenerator.freshVar();
+                                                                                    buffer.emit(cond + " = icmp ne i32 0, " + $$->m_reg);
+                                                                                    int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                    $$->m_trueList = buffer.merge($$->m_trueList, buffer.makelist({address, FIRST}));
+                                                                                    $$->m_falseList = buffer.merge($$->m_falseList, buffer.makelist({address, SECOND}));
+                                                                                  }
+                                                                                }
+ExpList:              Exp
+                                                                                {
+                                                                                  $$ = new ExpList();
+                                                                                  $$->m_typeList.push_back($1->m_type);
+                                                                                  $$->m_exp.push_back($1);
+                                                                                  if ($1->m_type == "BOOL") {
+                                                                                    createIntersection($1, buffer, varGenerator);
+                                                                                  }
+                                                                                }
+                      | ExpList COMMA  Exp
+                                                                                {
+                                                                                  $1->m_typeList.push_back($3->m_type);
+                                                                                  $1->m_exp.push_back($3);
+                                                                                  if ($3->m_type == "BOOL") {
+                                                                                    createIntersection($3, buffer, varGenerator);
+                                                                                  }
+                                                                                }
+Type:                 INT
+                                                                                { $$ = new Exp("INT");}
+                      | BYTE
+                                                                                { $$ = new Exp("BYTE");}
+                      | BOOL
+                                                                                { $$ = new Exp("BOOL");}
+                      | SET LBRACKET NUM_WITH_VAL DOTS NUM_WITH_VAL RBRACKET
+                                                                                {
+                                                                                    if (($5->m_val - $3->m_val) > 255 || ($5->m_val - $3->m_val) < 0){
+                                                                                    output::errorSetTooLarge(yylineno, to_string($3->m_val), to_string($5->m_val));
+                                                                                    exit(0);
+                                                                                    }
+
+                                                                                  $$ = new Exp("SET", $3->m_val, $5->m_val);
+
+                                                                                  // makeSet($$, $3->m_val, $5->m_val, buffer, varGenerator);
+
+                                                                                }
+
+
+NUM_WITH_VAL:         NUM
+                                                                                {
+                                                                                  $$ = new Exp("INT");
+                                                                                  $$->m_val = yylval.val;
+                                                                                  //$$->m_reg = varGenerator.freshVar();
+                                                                                  //buffer.emit($$->m_reg + " = add i32 0, " + to_string($$->m_val));
+                                                                               }
+                      | NUM B
+                                                                                {
+                                                                                    if (255 < yylval.val) {
+                                                                                      output::errorByteTooLarge(yylineno, to_string(yylval.val));
+                                                                                      exit(0);
+                                                                                    }
+                                                                                    $$ = new Exp("BYTE");
+                                                                                    $$->m_val = yylval.val;
+                                                                                    $$->m_reg = varGenerator.freshVar();
+                                                                                    buffer.emit($$->m_reg + " = add i32 0, " + to_string($$->m_val));
+                                                                               }
+
+
+
+
+Exp:                  LPAREN Exp RPAREN
+                                                                                {
+                                                                                    $$ = new Exp($2->m_type);
+                                                                                    $$->m_reg = $2->m_reg;
+                                                                                    $$->m_trueList = $2->m_trueList;
+                                                                                    $$->m_falseList = $2->m_falseList;
+                                                                                }
+                      | Exp ADDBINOP Exp
+                                                                                {
+
+                                                                                  $$ = validateAdd($1, $3);
+
+                                                                                  if($1->m_type == "SET"|| $3->m_type == "SET"){
+                                                                                    setBinop($$, $1, $3, buffer, varGenerator, "add");
+                                                                                    if($1->m_type == "SET") {
+                                                                                        $$ -> m_name = $1 ->m_name;
+                                                                                    } else {
+                                                                                        $$ ->m_name = $3 -> m_name;
+                                                                                    }
+                                                                                  }else{
+                                                                                    $$->m_reg = varGenerator.freshVar();
+                                                                                    printOP($$->m_reg, $1->m_reg, $3->m_reg, "add", buffer);
+
+                                                                                    // zeroing upper bits
+                                                                                    if ($$->m_type == "BYTE") {
+                                                                                        string temp = $$->m_reg;
+                                                                                        $$->m_reg = varGenerator.freshVar();
+                                                                                        buffer.emit($$->m_reg + " = and i32 " + temp + ", 255");
+                                                                                    }
+                                                                                  }
+                                                                                }
+                      | Exp SUBBINOP Exp
+                                                                                {
+                                                                                  $$ = validateAdd($1, $3);
+
+                                                                                  if($1->m_type == "SET"|| $3->m_type == "SET"){
+                                                                                    setBinop($$, $1, $3, buffer, varGenerator, "sub");
+                                                                                    if($1->m_type == "SET") {
+                                                                                        $$ -> m_name = $1 ->m_name;
+                                                                                    } else {
+                                                                                        $$ ->m_name = $3 -> m_name;
+                                                                                    }
+                                                                                  }else{
+                                                                                    $$->m_reg = varGenerator.freshVar();
+                                                                                    printOP($$->m_reg, $1->m_reg, $3->m_reg, "sub", buffer);
+
+                                                                                    // zeroing upper bits
+                                                                                    if ($$->m_type == "BYTE") {
+                                                                                        string temp = $$->m_reg;
+                                                                                        $$->m_reg = varGenerator.freshVar();
+                                                                                        buffer.emit($$->m_reg + " = and i32 " + temp + ", 255");
+                                                                                    }
+                                                                                  }
+                                                                                }
+                      | Exp MULBINOP Exp
+                                                                                {
+                                                                                  $$ = validateMul($1, $3);
+                                                                                  $$->m_reg = varGenerator.freshVar();
+                                                                                  printOP($$->m_reg, $1->m_reg, $3->m_reg, "mul", buffer);
+
+                                                                                  // zeroing upper bits
+                                                                                  if ($$->m_type == "BYTE") {
+                                                                                    string temp = $$->m_reg;
+                                                                                    $$->m_reg = varGenerator.freshVar();
+                                                                                    buffer.emit($$->m_reg + " = and i32 " + temp + ", 255");
+                                                                                  }
+                                                                                }
+                      | Exp DIVBINOP Exp
+                                                                                {
+                                                                                  $$ = validateMul($1, $3);
+                                                                                  $$->m_reg = varGenerator.freshVar();
+
+                                                                                  // checking 0 div
+                                                                                  string cond = varGenerator.freshVar();
+                                                                                  buffer.emit(cond + " = icmp eq i32 0, " + $3->m_reg);
+                                                                                  int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                  string zeroDivLabel = buffer.genLabel();
+                                                                                  buffer.emit("call i32 (i8*, ...) @printf(i8* getelementptr ([24 x i8], [24 x i8]* @zero_div_error, i32 0, i32 0))");
+                                                                                  buffer.emit("call void (i32) @exit(i32 1)");
+                                                                                  int exitAddress = buffer.emit("br label @");
+                                                                                  string okLabel = buffer.genLabel();
+
+                                                                                  printOP($$->m_reg, $1->m_reg, $3->m_reg, "sdiv", buffer);
+
+                                                                                  // bpatch error handling
+                                                                                  buffer.bpatch(buffer.makelist({address, FIRST}), zeroDivLabel);
+                                                                                  buffer.bpatch(buffer.makelist({address, SECOND}), okLabel);
+                                                                                  buffer.bpatch(buffer.makelist({exitAddress, FIRST}), okLabel);
+
+                                                                                  // zeroing upper bits
+                                                                                  if ($$->m_type == "BYTE") {
+                                                                                    string temp = $$->m_reg;
+                                                                                    $$->m_reg = varGenerator.freshVar();
+                                                                                    buffer.emit($$->m_reg + " = and i32 " + temp + ", 255");
+                                                                                  }
+                                                                                }
+                      | ID
+                                                                                {
+
+                                                                                    Symbol* sym = symbolTable.findSymbol($1->m_name);
+                                                                                    $$ = new Exp(sym);
+                                                                                    string ptr = varGenerator.freshVar();
+                                                                                    $$->m_reg = varGenerator.freshVar();
+                                                                                    $$->m_name = $1 -> m_name;
+                                                                                    string offset = to_string(sym->m_offset + argsAmount);
+                                                                                    buffer.emit(ptr + " = getelementptr [" + to_string(50 + argsAmount) + " x i32], [" + to_string(50 + argsAmount) + " x i32]* " + fp + ", i32 0, i32 " + offset);
+                                                                                    buffer.emit($$->m_reg + " = load i32, i32* " + ptr);
+
+                                                                                    if (sym->m_type == "BOOL") {
+                                                                                        string cond = varGenerator.freshVar();
+                                                                                        buffer.emit(cond + " = icmp eq i32 " + $$->m_reg + ", 1");
+                                                                                        int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                        $$->m_trueList = buffer.merge($$->m_trueList, buffer.makelist({address, FIRST}));
+                                                                                        $$->m_falseList = buffer.merge($$->m_falseList, buffer.makelist({address, SECOND}));
+                                                                                    }
+                                                                                 }
+                      | Call
+                                                                                {
+                                                                                    $$ = new Exp($1->m_type);
+                                                                                    if ($$->m_type != "VOID") {
+                                                                                        $$->m_reg = $1->m_reg;
+                                                                                    }
+                                                                                    $$->m_trueList = buffer.merge($$->m_trueList, $1->m_trueList);
+                                                                                    $$->m_falseList = buffer.merge($$->m_falseList, $1->m_falseList);
+                                                                                }
+                      | NUM
+                                                                                {
+                                                                                  $$ = new Exp("INT");
+
+                                                                                  $$->m_reg = varGenerator.freshVar();
+                                                                                  buffer.emit($$->m_reg + " = add i32 0, " + to_string(yylval.val));
+                                                                                }
+                      | NUM B
+                                                                                {
+                                                                                    if (255 < yylval.val) {
+                                                                                      output::errorByteTooLarge(yylineno, to_string(yylval.val));
+                                                                                      exit(0);
+                                                                                    }
+                                                                                    $$ = new Exp("BYTE");
+                                                                                    $$->m_reg = varGenerator.freshVar();
+                                                                                    buffer.emit($$->m_reg + " = add i32 0, " + to_string(yylval.val));
+                                                                                }
+                      | STRING
+                                                                                {
+                                                                                    $$ = new Exp("STRING");
+                                                                                    $$->m_reg = varGenerator.freshString();
+                                                                                    $$->m_size = to_string(yylval.id->m_name.size() + 1);
+                                                                                    buffer.emitGlobal($$->m_reg + " = global [" + $$->m_size + " x i8] c\"" + yylval.id->m_name + "\\00\"");
+                                                                                }
+                      | TRUE
+                                                                                {
+                                                                                  $$ = new Exp("BOOL");
+                                                                                  int address = buffer.emit("br label @");
+                                                                                  $$->m_trueList = buffer.merge($$->m_trueList, buffer.makelist({address, FIRST}));
+                                                                                }
+                      | FALSE
+                                                                                {
+                                                                                  $$ = new Exp("BOOL");
+                                                                                  int address = buffer.emit("br label @");
+                                                                                  $$->m_falseList = buffer.merge($$->m_falseList, buffer.makelist({address, FIRST}));
+                                                                                }
+                      | NOT Exp
+                                                                                {
+                                                                                  $$ = validateBool($2);
+                                                                                  $$->m_trueList = $2->m_falseList;
+                                                                                  $$->m_falseList = $2->m_trueList;
+                                                                                }
+                      | Exp AND M Exp
+                                                                                {
+                                                                                  $$ = validateBinBool($1, $4);
+                                                                                  buffer.bpatch($1->m_trueList, $3->m_label);
+                                                                                  $$->m_falseList = buffer.merge($1->m_falseList, $4->m_falseList);
+                                                                                  $$->m_trueList = buffer.merge($$->m_trueList, $4->m_trueList);
+                                                                                }
+                      | Exp OR M Exp
+                                                                                {
+                                                                                  $$ = validateBinBool($1, $4);
+                                                                                  buffer.bpatch($1->m_falseList, $3->m_label);
+                                                                                  $$->m_trueList = buffer.merge($1->m_trueList, $4->m_trueList);
+                                                                                  $$->m_falseList = buffer.merge($$->m_falseList, $4->m_falseList);
+                                                                                }
+                      | Exp LT Exp                                                {
+                                                                                        $$ = validateRelop($1, $3);
+                                                                                        string cond = varGenerator.freshVar();
+                                                                                        buffer.emit(cond + " = icmp slt i32 " + $1->m_reg + ", " + $3->m_reg);
+                                                                                        int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                        $$->m_trueList = buffer.merge($$->m_trueList, buffer.makelist({address, FIRST}));
+                                                                                        $$->m_falseList = buffer.merge($$->m_falseList, buffer.makelist({address, SECOND}));
+                                                                                    }
+                      | Exp GT Exp
+                                                                                {
+                                                                                        $$ = validateRelop($1, $3);
+                                                                                        string cond = varGenerator.freshVar();
+                                                                                        buffer.emit(cond + " = icmp sgt i32 " + $1->m_reg + ", " + $3->m_reg);
+                                                                                        int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                        $$->m_trueList = buffer.merge($$->m_trueList, buffer.makelist({address, FIRST}));
+                                                                                        $$->m_falseList = buffer.merge($$->m_falseList, buffer.makelist({address, SECOND}));
+                                                                                }
+                        | Exp LTE Exp
+                        {
+                                                                                        $$ = validateRelop($1, $3);
+                                                                                        string cond = varGenerator.freshVar();
+                                                                                        buffer.emit(cond + " = icmp sle i32 " + $1->m_reg + ", " + $3->m_reg);
+                                                                                        int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                        $$->m_trueList = buffer.merge($$->m_trueList, buffer.makelist({address, FIRST}));
+                                                                                        $$->m_falseList = buffer.merge($$->m_falseList, buffer.makelist({address, SECOND}));
+                                                                                    }
+                        | Exp GTE Exp                                               {
+                                                                                        $$ = validateRelop($1, $3);
+                                                                                        string cond = varGenerator.freshVar();
+                                                                                        buffer.emit(cond + " = icmp sge i32 " + $1->m_reg + ", " + $3->m_reg);
+                                                                                        int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                        $$->m_trueList = buffer.merge($$->m_trueList, buffer.makelist({address, FIRST}));
+                                                                                        $$->m_falseList = buffer.merge($$->m_falseList, buffer.makelist({address, SECOND}));
+                                                                                    }
+                        | Exp EQUALS Exp                                            {
+                                                                                        $$ = validateRelop($1, $3);
+                                                                                        string cond = varGenerator.freshVar();
+                                                                                        buffer.emit(cond + " = icmp eq i32 " + $1->m_reg + ", " + $3->m_reg);
+                                                                                        int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                        $$->m_trueList = buffer.merge($$->m_trueList, buffer.makelist({address, FIRST}));
+                                                                                        $$->m_falseList = buffer.merge($$->m_falseList, buffer.makelist({address, SECOND}));
+                                                                                    }
+                        | Exp NOT_EQUALS Exp                                        {
+                                                                                        $$ = validateRelop($1, $3);
+                                                                                        string cond = varGenerator.freshVar();
+                                                                                        buffer.emit(cond + " = icmp ne i32 " + $1->m_reg + ", " + $3->m_reg);
+                                                                                        int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                        $$->m_trueList = buffer.merge($$->m_trueList, buffer.makelist({address, FIRST}));
+                                                                                        $$->m_falseList = buffer.merge($$->m_falseList, buffer.makelist({address, SECOND}));
+                                                                                    }
+                      | Exp IN Exp
+                                                                                {
+
+                                                                                    $$ = validateIn($1, $3);
+
+                                                                                    setIn($$, $1, $3, buffer, varGenerator);
+                                                                                }
+                      | LPAREN Type RPAREN Exp
+                                                                                {
+                                                                                // TODO - should we add emit set
+                                                                                  if ($2->m_type != "INT" || $4->m_type != "SET"){
+                                                                                     output::errorMismatch(yylineno);
+                                                                                  }
+                                                                                  $$ = new Exp("INT");
+                                                                                  castSetToInt($4, $$, buffer, varGenerator);
+                                                                                }
+
+%%
+
+int main(){
+	yyparse();
+	buffer.printGlobalBuffer();
+    buffer.printCodeBuffer();
+}
+
+int yyerror(const char* message){
+  output::errorSyn(yylineno);
+  exit(0);
+}
+
+Exp* validateMul(Exp* type1, Exp* type2) {
+    if (type1->m_type == "BYTE" && type2->m_type == "BYTE") {
+        return new Exp("BYTE");
+    }
+    if ((type1->m_type == "INT" && type2->m_type == "INT") || (type1->m_type == "INT" && type2->m_type == "BYTE") || (type1->m_type == "BYTE" && type2->m_type == "INT")) {
+        return new Exp("INT");
+    }
+    output::errorMismatch(yylineno);
+    exit(0);
+}
+
+Exp* validateAdd(Exp* type1, Exp* type2) {
+    if (type1->m_type == "BYTE" && type2->m_type == "BYTE") {
+        return new Exp("BYTE");
+    }
+    if ((type1->m_type == "INT" && type2->m_type == "INT") || (type1->m_type == "INT" && type2->m_type == "BYTE") || (type1->m_type == "BYTE" && type2->m_type == "INT")) {
+        return new Exp("INT");
+    }
+    if ((type1->m_type == "SET" && (type2->m_type == "INT" || type2->m_type == "BYTE")) || (type2->m_type == "SET" && (type1->m_type == "INT" || type1->m_type == "BYTE"))) {
+            return new Exp("SET");
+    }
+    output::errorMismatch(yylineno);
+    exit(0);
+}
+
+Exp* validateBool(Exp* origExp) {
+    if (origExp->m_type == "BOOL"){
+        return new Exp("BOOL");
+    }
+    output::errorMismatch(yylineno);
+    exit(0);
+}
+
+Exp* validateBinBool(Exp* type1, Exp* type2) {
+    if (type1->m_type == "BOOL" && type2->m_type == "BOOL") {
+        return new Exp("BOOL");
+    }
+    output::errorMismatch(yylineno);
+    exit(0);
+}
+
+Exp* validateRelop (Exp* type1, Exp* type2) {
+    if ((type1->m_type == "INT" || type1->m_type == "BYTE") && (type2->m_type =="INT" || type2->m_type == "BYTE")) {
+        return new Exp("BOOL");
+    }
+    output::errorMismatch(yylineno);
+    exit(0);
+}
+
+Exp* validateIn (Exp* type1, Exp* type2) {
+    if ((type1->m_type == "INT" || type1->m_type == "BYTE") && (type2->m_type =="SET")) {
+        return new Exp("BOOL");
+    }
+    output::errorMismatch(yylineno);
+    exit(0);
+}
+
+
+void declarePrerequisites() {
+    // Set type declaration
+    buffer.emit("%struct.Set = type {i32, i32, i32, [256 x i1]}"); // lower bound, upper bound, number of elements, bit map of 256 bits
+
+    // Standard C function declarations
+    buffer.emit("declare i32 @printf(i8*, ...)");
+    buffer.emit("declare void @exit(i32)");
+    buffer.emit("declare i8* @malloc(i32)");
+    buffer.emit("declare void @free(i8*)");
+    buffer.emit("declare void @llvm.memset.p0i8.i32(i8*, i8, i32, i1)");
+    buffer.emit("declare void @llvm.memcpy.p0i8.p0i8.i32(i8*, i8*, i32, i1)");
+
+
+    // Global declarations
+    buffer.emitGlobal("@.int_specifier = constant [4 x i8] c\"%d\\0A\\00\"");
+    buffer.emitGlobal("@.str_specifier = constant [4 x i8] c\"%s\\0A\\00\"");
+    buffer.emitGlobal("@zero_div_error = constant [24 x i8] c\"Error division by zero\n\\00\"");
+    buffer.emitGlobal("@set_add_error = constant [31 x i8] c\"Error out of set range. Op: +\n\\00\"");
+    buffer.emitGlobal("@set_sub_error = constant [31 x i8] c\"Error out of set range. Op: -\n\\00\"");
+    buffer.emitGlobal("@set_in_error = constant [32 x i8] c\"Error out of set range. Op: in\n\\00\"");
+
+    // print declaration
+    buffer.emit("define void @printi(i32) {");
+    buffer.emit("call i32 (i8*, ...) @printf(i8* getelementptr ([4 x i8], [4 x i8]* @.int_specifier, i32 0, i32 0), i32 %0)");
+    buffer.emit("ret void");
+    buffer.emit("}");
+
+    // printi declaration
+    buffer.emit("define void @print(i8*) {");
+    buffer.emit("call i32 (i8*, ...) @printf(i8* getelementptr ([4 x i8], [4 x i8]* @.str_specifier, i32 0, i32 0), i8* %0)");
+    buffer.emit("ret void");
+    buffer.emit("}");
+}
