@@ -1,0 +1,4 @@
+code/.idea/
+code/cmake-build-debug
+code/*.o
+code/*.out
