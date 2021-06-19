@@ -8,6 +8,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include "bp.hpp"
+
 using namespace std;
 
 
@@ -15,9 +17,14 @@ struct Exp {
     string m_varName;
     string m_type;
     int m_val;
+    string m_reg;
+    size_t string_len;
+    vector<pair<int,BranchLabelIndex>> m_trueList;
+    vector<pair<int,BranchLabelIndex>> m_falseList;
 
-    explicit Exp(const string& type) {
+    explicit Exp(const string& type, const string& reg_name = "") {
         this->m_type = string(type);
+        this->m_reg = string(reg_name);
     }
 };
 
@@ -71,6 +78,24 @@ struct TypeList {
     }
 };
 
+struct Label {
+    string m_label;
+    explicit Label(const string& label_name) {
+        this->m_label = string(label_name);
+    }
+};
+
+struct Block {
+    vector<pair<int,BranchLabelIndex>> m_nextList;
+    vector<pair<int,BranchLabelIndex>> m_breakList;
+    vector<pair<int,BranchLabelIndex>> m_continueList;
+    Block() {
+        this->m_nextList = vector<pair<int,BranchLabelIndex>>();
+        this->m_breakList = vector<pair<int,BranchLabelIndex>>();
+        this->m_continueList = vector<pair<int,BranchLabelIndex>>();
+    }
+};
+
 typedef union Node
 {
     Exp* exp;
@@ -79,6 +104,8 @@ typedef union Node
     FuncArgsList* funcArgsList;
     TypeList* typeList;
     int val;
+    Label* label;
+    Block* block;
 } STYPE;
 
 #define YYSTYPE STYPE

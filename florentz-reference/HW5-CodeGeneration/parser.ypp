@@ -675,6 +675,7 @@ Exp:                  LPAREN Exp RPAREN
                                                                                   $$ = validateBinBool($1, $4);
                                                                                   buffer.bpatch($1->m_falseList, $3->m_label);
                                                                                   $$->m_trueList = buffer.merge($1->m_trueList, $4->m_trueList);
+
                                                                                   $$->m_falseList = buffer.merge($$->m_falseList, $4->m_falseList);
                                                                                 }
                       | Exp LT Exp                                                {

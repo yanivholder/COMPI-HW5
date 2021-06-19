@@ -36,6 +36,7 @@ public:
     string return_type = "";
     FuncSymbol(string name, string return_type, StrVec& args_type);
     void print() override;
+    string ir_params();
 };
 
 typedef vector<Symbol*> SymVec;

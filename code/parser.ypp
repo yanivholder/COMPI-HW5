@@ -1,37 +1,21 @@
 %{
-    #include "hw3-output.hpp"
-    #include "sym_tables.hpp"
-    #include "structs.hpp"
+    #include "parser_funcs.hpp"
 
 	using namespace output;
-
-    typedef enum ops {
-        PASSIGN,
-        PRELOP,
-        PAND,
-        POR,
-        PNOT,
-        PBINOP,
-    } ops;
 
 	extern int yylineno;
 	int yyerror(const char * message);
     extern int yylex();
     extern char* yytext;
 
-    Exp* do_op(Exp* var1, Exp* var2, ops op);
-    void vaildate_type(string x, string y);
-    FuncSymbol* get_func(string name, std::vector<string> type_list);
-    void validate_func(std::vector<string> expected, std::vector<string> current, string name);
-    void validate_assign(string var1, string var2);
-    string get_var_type(string var_name);
-
-    SymbolTable symbolTable = SymbolTable();
+    extern SymbolTable symbolTable;
     string curr_func_ret_type("");
     string curr_exp_type("");
     int during_while = 0;
     int during_switch = 0;
-
+    string frame_pointer;
+    int args_amount;
+    bool return_happened = false;
 
 
 %}
@@ -70,10 +54,17 @@
 %left AND
 
 %left RELOP_EQ
-%nonassoc RELOP_REL
+%left RELOP_NOT_EQ
 
-%left BINOP_ADD
-%left BINOP_MUL
+%nonassoc RELOP_LT;
+%nonassoc RELOP_GT;
+%nonassoc RELOP_LTE;
+%nonassoc RELOP_GTE;
+
+%left BINOP_ADD;
+%left BINOP_SUB;
+%left BINOP_MUL;
+%left BINOP_DIV;
 
 %right NOT
 
@@ -92,6 +83,13 @@
 %type<id> ID;
 %type<exp> NUM;
 
+/* TODO add all the new types */
+
+%type<label> M;
+%type<block> N;
+%type<block> Statement;
+%type<block> Statements;
+
 %%
 
 
@@ -104,17 +102,42 @@ Funcs       :   /* epsilon */                                               {
                                                                             }
             |   FuncDecl Funcs                                              { }
 
-FuncDecl    :   RetType ID LPAREN Formals RPAREN                            { symbolTable.add_func_symbol($2->m_name, $1->m_type, $4->m_argsList); }
+FuncDecl    :   RetType ID LPAREN Formals RPAREN                            { return_happened = false; symbolTable.add_func_symbol($2->m_name, $1->m_type, $4->m_argsList); }
 
                 LBRACE                                                      {
                                                                               symbolTable.open_scope();
                                                                               curr_func_ret_type = $1->m_type;
                                                                               symbolTable.add_func_args($4->m_argsList);
+
+                                                                              string ir_ret_type = curr_func_ret_type == "VOID" ? "void" : "i32";
+                                                                              auto func_sym = symbolTable.search_symbol($2->m_name, true);
+
+                                                                              buffer.emit("define " + ir_ret_type + " @" + $2->m_name + func_sym->ir_params() + " {");
+                                                                              frame_pointer = Generator::new_tmp();
+                                                                              int args_amount = $4->m_argsList.size();
+                                                                              for (int i = 0; i < args_amount; i++) {
+                                                                                 string index = to_string(args_amount - i - 1);
+                                                                                 string reg = "%" + to_string(i);
+                                                                                 string ptr = Generator::new_tmp();
+                                                                                 buffer.emit(ptr + " = getelementptr [" + to_string(50 + args_amount) + " x i32], [" + to_string(50 + args_amount) + " x i32]* " + frame_pointer + ", i32 0, i32 " + index);
+                                                                                 buffer.emit("store i32 " + reg + ", i32* " + ptr);
+                                                                              }
                                                                             }
 
                 Statements RBRACE                                           {
-                                                                                curr_func_ret_type = "";
                                                                                 symbolTable.close_scope();
+                                                                                if(return_happened == false) {
+                                                                                    if(curr_func_ret_type == "VOID") {
+                                                                                        buffer.emit("ret void");
+                                                                                    }
+                                                                                    else {
+                                                                                        string ret_val = Generator::new_tmp();
+                                                                                        buffer.emit(ret_val + " = add i32 0, 0");
+                                                                                        buffer.emit("ret i32 " + ret_val);
+                                                                                    }
+                                                                                }
+                                                                                buffer.emit("}");
+                                                                                curr_func_ret_type = "";
                                                                             }
 
 RetType     :   Type                                                        { $$ = new Exp($1->m_type); }
@@ -149,10 +172,18 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           { }
                                                                                 validate_assign(type, $3->m_type);
                                                                             }
                 |   Call SC                                                 { }
-                |   RETURN SC                                               { vaildate_type(curr_func_ret_type, "VOID"); }
-                |   RETURN Exp SC                                           { validate_assign(curr_func_ret_type, $2->m_type); }
-                |   IF LPAREN Exp RPAREN mark OpenScope Statement CloseScope
-                |   IF LPAREN Exp RPAREN mark OpenScope Statement CloseScope
+                |   RETURN SC                                               {
+                                                                                return_happened = true;
+                                                                                vaildate_type(curr_func_ret_type, "VOID");
+                                                                                buffer.emit("ret i32 " + $2->m_reg);
+                                                                            }
+                |   RETURN Exp SC                                           {
+                                                                                return_happened = true;
+                                                                                validate_assign(curr_func_ret_type, $2->m_type);
+                                                                                buffer.emit("ret void");
+                                                                            }
+                |   IF LPAREN Exp RPAREN MarkInIF OpenScope Statement CloseScope
+                |   IF LPAREN Exp RPAREN MarkInIF OpenScope Statement CloseScope
                 ELSE OpenScope Statement CloseScope
                 |   WHILE LPAREN Exp RPAREN                                 {
                                                                                 vaildate_type($3->m_type, "BOOL");
@@ -170,7 +201,7 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           { }
                                                                             }
                     LBRACE OpenScope CaseList RBRACE CloseScope             {   during_switch--; }
 
-mark        : { vaildate_type(curr_exp_type, "BOOL"); }
+MarkInIF    :  /* epsilon */                                                { vaildate_type(curr_exp_type, "BOOL"); }
 
 
 Call        :   ID LPAREN ExpList RPAREN                                    {
@@ -197,8 +228,10 @@ Type        :   INT                                                         { $$
             |   BOOL                                                        { $$ = new Exp("BOOL"); }
 
 Exp         :   LPAREN Exp RPAREN                                           { $$ = new Exp($2->m_type); curr_exp_type = "INT"; }
-            |   Exp BINOP_ADD Exp                                           { $$ = do_op($1, $3, PBINOP); curr_exp_type = "INT"; }
-            |   Exp BINOP_MUL Exp                                           { $$ = do_op($1, $3, PBINOP); curr_exp_type = "INT"; }
+            |   Exp BINOP_ADD Exp                                           { $$ = do_op($1, $3, PBINOP, "add"); curr_exp_type = "INT"; }
+            |   Exp BINOP_SUB Exp                                           { $$ = do_op($1, $3, PBINOP, "sub"); curr_exp_type = "INT"; }
+            |   Exp BINOP_MUL Exp                                           { $$ = do_op($1, $3, PBINOP, "mul"); curr_exp_type = "INT"; }
+            |   Exp BINOP_DIV Exp                                           { $$ = do_op($1, $3, PBINOP, "sdiv"); curr_exp_type = "INT"; }
             |   ID                                                          {
                                                                               string type = get_var_type($1->m_name);
                                                                               $$ = new Exp(type);
@@ -219,10 +252,20 @@ Exp         :   LPAREN Exp RPAREN                                           { $$
             |   TRUE                                                        { $$ = new Exp("BOOL"); curr_exp_type = "BOOL"; }
             |   FALSE                                                       { $$ = new Exp("BOOL"); curr_exp_type = "BOOL"; }
             |   NOT Exp                                                     { $$ = do_op($2, $2, PNOT); curr_exp_type = "BOOL"; }
-            |   Exp AND Exp                                                 { $$ = do_op($1, $3, PAND); curr_exp_type = "BOOL"; }
-            |   Exp OR Exp                                                  { $$ = do_op($1, $3, POR); curr_exp_type = "BOOL"; }
-            |   Exp RELOP_EQ Exp                                            { $$ = do_op($1, $3, PRELOP); curr_exp_type = "BOOL"; }
-            |   Exp RELOP_REL Exp                                           { $$ = do_op($1, $3, PRELOP); curr_exp_type = "BOOL"; }
+            |   Exp AND M Exp                                               {
+                                                                                buffer.bpatch($1->m_trueList, $3->m_label);
+                                                                                $$ = do_op($1, $4, PAND);
+                                                                            }
+            |   Exp OR M Exp                                                {
+                                                                                buffer.bpatch($1->m_falseList, $3->m_label);
+                                                                                $$ = do_op($1, $4, POR);
+                                                                            }
+            |   Exp RELOP_EQ Exp                                            { $$ = do_op($1, $3, PRELOP, "eq"); curr_exp_type = "BOOL"; }
+            |   Exp RELOP_NOT_EQ Exp                                        { $$ = do_op($1, $3, PRELOP, "ne"); curr_exp_type = "BOOL"; }
+            |   Exp RELOP_LT Exp                                            { $$ = do_op($1, $3, PRELOP, "slt"); curr_exp_type = "BOOL"; }
+            |   Exp RELOP_GT Exp                                            { $$ = do_op($1, $3, PRELOP, "sge"); curr_exp_type = "BOOL"; }
+            |   Exp RELOP_LTE Exp                                           { $$ = do_op($1, $3, PRELOP, "sle"); curr_exp_type = "BOOL"; }
+            |   Exp RELOP_GTE Exp                                           { $$ = do_op($1, $3, PRELOP, "sge"); curr_exp_type = "BOOL"; }
 
 CaseList         :   CaseDecl CaseList                                      { }
                  |   CaseDecl                                               { }
@@ -234,6 +277,13 @@ OpenScope   :   /* epsilon */                                               { sy
 
 CloseScope  :   /* epsilon */                                               { symbolTable.close_scope(); }
 
+M           :   /* epsilon */                                               { $$ = new Label(buffer.genLabel()); }
+
+N           :   /* epsilon */                                               {
+                                                                              int address = buffer.emit("br label @");
+                                                                              $$ = new Block();
+                                                                              $$->m_nextList = buffer.makelist({address, FIRST});
+                                                                            }
 
 %%
 
@@ -246,97 +296,3 @@ int yyerror(const char* message) {
 	exit(1);
 }
 
-bool is_number(Exp* var) {
-    if (var->m_type == "INT" || var->m_type == "BYTE")
-        return true;
-    else
-        return false;
-}
-
-void validate_assign(string var1, string var2) {
-
-    if(var1 == "VOID" || !(var1 == var2 || (var1 == "INT" && var2 == "BYTE"))) {
-        errorMismatch(yylineno);
-        exit(1);
-    }
-}
-
-string get_var_type(string var_name) {
-    VarSymbol* var = (VarSymbol*)symbolTable.search_symbol(var_name, false);
-    if(var == nullptr) {
-        errorUndef(yylineno, var_name);
-        exit(1);
-    }
-    return var->type;
-}
-
-Exp* do_op(Exp* var1, Exp* var2, ops op) {
-    if(var1->m_type == "STRING" || var2->m_type == "STRING") {
-        goto err;
-    }
-    switch(op){
-        case(PASSIGN):
-            validate_assign(var1->m_type, var2->m_type);
-            return var1;
-
-        case(PRELOP):
-            if (is_number(var1) && is_number(var2))
-                return new Exp("BOOL");
-            break;
-
-         case(PAND): case(POR):
-            if (var1->m_type == "BOOL" && var2->m_type == "BOOL")
-                return new Exp("BOOL");
-            break;
-
-        case(PNOT):
-            if (var1->m_type == "BOOL")
-                return new Exp("BOOL");
-            break;
-
-        case(PBINOP):
-            if (is_number(var1) && is_number(var2)){
-                if(var1->m_type == "INT" || var2->m_type == "INT")
-                    return new Exp("INT");
-                else
-                    return new Exp("BYTE");
-            }
-            break;
-    }
-err:
-    errorMismatch(yylineno);
-    exit(1);
-}
-
-void vaildate_type(string x, string y){
-    if (x != y)
-    {
-        output::errorMismatch(yylineno);
-        exit(0);
-    }
-}
-
-FuncSymbol* get_func(string name, std::vector<string> type_list){
-    FuncSymbol* f = (FuncSymbol*)(symbolTable.search_symbol(name, true));
-    if (f == nullptr) {
-        errorUndefFunc(yylineno, name);
-        exit(0);
-    }
-    validate_func(f->args_type, type_list, f->name);
-    return f;
-}
-
-void validate_func(std::vector<string> expected, std::vector<string> current, string name) {
-    if (expected.size() != current.size())
-    {
-        errorPrototypeMismatch(yylineno, name, expected);
-        exit(1);
-    }
-    int size = expected.size();
-    for(int i=0; i < size; i++){
-        if(expected[i] != current[size-i-1] && !(expected[i] == "INT" && current[size-i-1] == "BYTE")){
-            errorPrototypeMismatch(yylineno, name, expected);
-            exit(1);
-        }
-    }
-}

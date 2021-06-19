@@ -44,10 +44,16 @@ default                     return DEFAULT;
 \{                          return LBRACE;
 \}                          return RBRACE;
 =                           return ASSIGN;
-==|!=                       return RELOP_EQ;
-\<|\>|\<=|\>=               return RELOP_REL;
-\+|\-                       return BINOP_ADD;
-\*|\/                       return BINOP_MUL;
+==                          return RELOP_EQ;
+!=                          return RELOP_NOT_EQ;
+\<                          return RELOP_LT;
+\>                          return RELOP_GT;
+\<=                         return RELOP_LTE;
+\>=                         return RELOP_GTE;
+\+                          return BINOP_ADD;
+\-                          return BINOP_SUB;
+\*                          return BINOP_MUL;
+\/                          return BINOP_DIV;
 {letter}({letter}|{digit})* {
                                 string name(yytext);
                                 yylval.id = new Id(name);
@@ -57,10 +63,15 @@ default                     return DEFAULT;
                                 yylval.val = atoi(yytext);
                                 return NUM;
                             }
-\"([^\n\r\"\\]|\\[rnt\"\\])+\"	return STRING;
+\"([^\n\r\"\\]|\\[rnt\"\\])+\" {
+	                                string name(yytext);
+	                                // TODO understand why saving as an ID
+                                    yylval.id = new Id(name.substr(1, name.size() - 2));
+	                                return STRING;
+                               }
 
-[\t\r\n ]                ;
-\/\/[^\r\n]*(\r|\n|\r\n)?  ;
+[\t\r\n ]                   ;
+\/\/[^\r\n]*(\r|\n|\r\n)?   ;
 
 .                           {
                                 output::errorLex(yylineno);

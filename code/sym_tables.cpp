@@ -24,6 +24,18 @@ void FuncSymbol::print() {
     output::printID(name, offset, output::makeFunctionType(return_type, args_type));
 }
 
+string FuncSymbol::ir_params(){
+    string res("(");
+    if (!this->args_type.empty()){
+        res += "i32";
+        for (int i=0; i < this->args_type.size(); i++){
+            res += ", i32";
+        }
+    }
+    res+=")";
+    return  res;
+}
+
 SymbolTable::SymbolTable() {
     offset_stack = stack<int>();
     tables_stack = TableVec();
@@ -56,7 +68,7 @@ Symbol* SymbolTable::search_symbol(const string& name, bool is_func) {
     return nullptr;
 }
 
-Symbol* SymbolTable::search_symbol_in_all_scopes(const string& name, bool is_func) {
+Symbol* SymbolTable::search_symbol_in_all_scopes(const string &name, bool is_func) {
     for (auto table_it = tables_stack.rbegin(); table_it != tables_stack.rend(); table_it++) {
         for (auto symbol_it = (*table_it)->symbols.rbegin(); symbol_it != (*table_it)->symbols.rend(); symbol_it++) {
             if(is_func) {

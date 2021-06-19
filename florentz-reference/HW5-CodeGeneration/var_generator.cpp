@@ -7,6 +7,7 @@
 using namespace std;
 
 VarGenerator::VarGenerator() : m_currVarNum(0), m_currStrNum(0) {}
+
 string VarGenerator::freshVar() {
     string var = "%t" + to_string(m_currVarNum);
     m_currVarNum++;
