@@ -84,7 +84,7 @@
 %type<exp> NUM;
 
 /* TODO add all the new types */
-
+%type<label> MarkInIF;
 %type<label> M;
 %type<block> N;
 %type<block> Statement;
@@ -183,15 +183,52 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           { }
                                                                                 buffer.emit("ret void");
                                                                             }
                 |   IF LPAREN Exp RPAREN MarkInIF OpenScope Statement CloseScope
-                |   IF LPAREN Exp RPAREN MarkInIF OpenScope Statement CloseScope
-                ELSE OpenScope Statement CloseScope
-                |   WHILE LPAREN Exp RPAREN                                 {
-                                                                                vaildate_type($3->m_type, "BOOL");
+                                                                            {
+                                                                                buffer.bpatch($3->m_trueList, $5->m_label);
+                                                                                $$ = new Block();
+                                                                                $$->m_breakList = $7->m_breakList;
+                                                                                $$->m_continueList = $7->m_continueList;
+                                                                                $$->m_nextList = buffer.merge($3->m_falseList, $7->m_nextList);
+                                                                                // int address = buffer.emit("br label @");
+                                                                                // $$->m_nextList = buffer.merge($$->m_nextList, buffer.makelist({address, FIRST}));
+                                                                                string label = buffer.genLabel();
+                                                                                buffer.bpatch($$->m_nextList, label);
+                                                                            }
+                |   IF LPAREN Exp RPAREN MarkInIF OpenScope Statement CloseScope N
+                ELSE M OpenScope Statement CloseScope
+                                                                            {
+                                                                                buffer.bpatch($3->m_falseList, $11->m_label);
+                                                                                buffer.bpatch($3->m_trueList, $5->m_label);
+
+                                                                                $$ = new Block();
+                                                                                $$->m_breakList = buffer.merge($7->m_breakList, $13->m_breakList);
+                                                                                $$->m_continueList = buffer.merge($7->m_continueList, $13->m_continueList);
+                                                                                $$->m_nextList = buffer.merge($7->m_nextList, $13->m_nextList);
+                                                                                $$->m_nextList = buffer.merge($$->m_nextList, $9->m_nextList);
+
+                                                                                // int address = buffer.emit("br label @");
+                                                                                // $$->m_nextList = buffer.merge($$->m_nextList, buffer.makelist({address, FIRST}));
+                                                                                string label = buffer.genLabel();
+                                                                                buffer.bpatch($$->m_nextList, label);
+                                                                            }
+                |   WHILE LPAREN M Exp RPAREN                                 {
+                                                                                vaildate_type($4->m_type, "BOOL");
                                                                                 during_while++;
-                                                                                symbolTable.open_scope(); }
-                    Statement                                               {
+                                                                                symbolTable.open_scope();
+                                                                              }
+                    M Statement                                               {
                                                                                 symbolTable.close_scope();
                                                                                 during_while--;
+                                                                                $$ = new Block();
+                                                                                buffer.bpatch($8->m_continueList, $3->m_label);
+                                                                                buffer.bpatch($4->m_trueList, $7->m_label);
+                                                                                buffer.bpatch($8->m_nextList, $3->m_label);
+
+                                                                                $$->m_nextList = buffer.merge($4->m_falseList, $8->m_breakList);
+
+                                                                                string label = buffer.genLabel();
+                                                                                buffer.bpatch($$->m_nextList, label);
+
                                                                             }
                 |   BREAK SC                                                {   if(!during_while && !during_switch) {errorUnexpectedBreak(yylineno); exit(1);} }
                 |   CONTINUE SC                                             {   if(!during_while) {errorUnexpectedContinue(yylineno); exit(1);} }
@@ -201,7 +238,10 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           { }
                                                                             }
                     LBRACE OpenScope CaseList RBRACE CloseScope             {   during_switch--; }
 
-MarkInIF    :  /* epsilon */                                                { vaildate_type(curr_exp_type, "BOOL"); }
+MarkInIF    :  /* epsilon */                                                {
+                                                                                vaildate_type(curr_exp_type, "BOOL");
+                                                                                $$ = new Label(buffer.genLabel());
+                                                                            }
 
 
 Call        :   ID LPAREN ExpList RPAREN                                    {
