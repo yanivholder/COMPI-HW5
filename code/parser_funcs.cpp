@@ -11,7 +11,7 @@ bool is_number(Exp* var) {
         return false;
 }
 
-void validate_assign(string var1, string var2) {
+void validate_assign(string& var1, string& var2) {
 
     if(var1 == "VOID" || !(var1 == var2 || (var1 == "INT" && var2 == "BYTE"))) {
         errorMismatch(yylineno);
@@ -19,8 +19,8 @@ void validate_assign(string var1, string var2) {
     }
 }
 
-string get_var_type(string var_name) {
-    VarSymbol* var = (VarSymbol*)symbolTable.search_symbol(var_name, false);
+string get_var_type(string& var_name) {
+    auto* var = (VarSymbol*)symbolTable.search_symbol(var_name, false);
     if(var == nullptr) {
         errorUndef(yylineno, var_name);
         exit(1);
@@ -32,30 +32,30 @@ static void emit_op(const string& a, const string& b, const string& c, const str
     buff.emit(a + " = " + op + " i32 " + b + ", " + c);
 }
 
-static void div_handler(Exp* var1, Exp* var2, string m_reg, CodeBuffer &buff){
+static void div_handler(Exp* var1, Exp* var2, string& m_reg){
     // first check for a zero div error
     string cond = Generator::new_tmp();
-    buff.emit(cond + " = icmp eq i32 0, " + var2->m_reg);
-    int address = buff.emit("br i1 " + cond + ", label @, label @");
-    string zeroDivLabel = buff.genLabel();
-    buff.emit("call i32 (i8*, ...) @printf(i8* getelementptr ([24 x i8], [24 x i8]* @zero_div_error, i32 0, i32 0))");
-    buff.emit("call void (i32) @exit(i32 1)");
-    int exitAddress = buff.emit("br label @");
-    string okLabel = buff.genLabel();
+    buffer.emit(cond + " = icmp eq i32 0, " + var2->m_reg);
+    int address = buffer.emit("br i1 " + cond + ", label @, label @");
+    string zeroDivLabel = buffer.genLabel();
+    buffer.emit("call i32 (i8*, ...) @printf(i8* getelementptr ([24 x i8], [24 x i8]* @zero_div_error, i32 0, i32 0))");
+    buffer.emit("call void (i32) @exit(i32 1)");
+    int exitAddress = buffer.emit("br label @");
+    string okLabel = buffer.genLabel();
 
     if (var1->m_type == "BYTE" && var2->m_type == "BYTE")
-        emit_op(m_reg, var1->m_reg, var2->m_reg, "udiv", buff);
+        emit_op(m_reg, var1->m_reg, var2->m_reg, "udiv", buffer);
     else
-        emit_op(m_reg, var1->m_reg, var2->m_reg, "sdiv", buff);
+        emit_op(m_reg, var1->m_reg, var2->m_reg, "sdiv", buffer);
 
     // bpatch error handling
-    buff.bpatch(buff.makelist({address, FIRST}), zeroDivLabel);
-    buff.bpatch(buff.makelist({address, SECOND}), okLabel);
-    buff.bpatch(buff.makelist({exitAddress, FIRST}), okLabel);
+    buffer.bpatch(CodeBuffer::makelist({address, FIRST}), zeroDivLabel);
+    buffer.bpatch(CodeBuffer::makelist({address, SECOND}), okLabel);
+    buffer.bpatch(CodeBuffer::makelist({exitAddress, FIRST}), okLabel);
 
 }
 
-Exp* do_op(Exp* var1, Exp* var2, ops op, string specific_op="") {
+Exp* do_op(Exp* var1, Exp* var2, ops op, const string& specific_op="") {
     if(var1->m_type == "STRING" || var2->m_type == "STRING") {
         goto err;
     }
@@ -74,8 +74,8 @@ Exp* do_op(Exp* var1, Exp* var2, ops op, string specific_op="") {
                     buffer.emit(cond + " = icmp " + specific_op + " i32 " + var1->m_reg + ", " + var2->m_reg);
 
                 int address = buffer.emit("br i1 " + cond + ", label @, label @");
-                ret->m_trueList = buffer.merge(ret->m_trueList, buffer.makelist({address, FIRST}));
-                ret->m_falseList = buffer.merge(ret->m_falseList, buffer.makelist({address, SECOND}));
+                ret->m_trueList = CodeBuffer::merge(ret->m_trueList, CodeBuffer::makelist({address, FIRST}));
+                ret->m_falseList = CodeBuffer::merge(ret->m_falseList, CodeBuffer::makelist({address, SECOND}));
                 return ret;
             }
             break;
@@ -83,8 +83,8 @@ Exp* do_op(Exp* var1, Exp* var2, ops op, string specific_op="") {
         case(PAND):
             if (var1->m_type == "BOOL" && var2->m_type == "BOOL") {
                 Exp *exp = new Exp("BOOL");
-                exp->m_falseList = buffer.merge(var1->m_falseList, var2->m_falseList);
-                exp->m_trueList = buffer.merge(exp->m_trueList, var2->m_trueList);
+                exp->m_falseList = CodeBuffer::merge(var1->m_falseList, var2->m_falseList);
+                exp->m_trueList = CodeBuffer::merge(exp->m_trueList, var2->m_trueList);
                 return exp;
             }
             break;
@@ -92,8 +92,8 @@ Exp* do_op(Exp* var1, Exp* var2, ops op, string specific_op="") {
         case(POR):
             if (var1->m_type == "BOOL" && var2->m_type == "BOOL") {
                 Exp *exp = new Exp("BOOL");
-                exp->m_trueList = buffer.merge(var1->m_trueList, var2->m_trueList);
-                exp->m_falseList = buffer.merge(exp->m_falseList, var2->m_falseList);
+                exp->m_trueList = CodeBuffer::merge(var1->m_trueList, var2->m_trueList);
+                exp->m_falseList = CodeBuffer::merge(exp->m_falseList, var2->m_falseList);
                 return exp;
             }
             break;
@@ -111,7 +111,7 @@ Exp* do_op(Exp* var1, Exp* var2, ops op, string specific_op="") {
             if (is_number(var1) && is_number(var2)){
                 string m_reg = Generator::new_tmp();
                 if (specific_op == "sdiv") // special handling
-                    div_handler(var1, var2, m_reg, buffer);
+                    div_handler(var1, var2, m_reg);
                 else
                     emit_op(m_reg, var1->m_reg, var2->m_reg, specific_op, buffer);
 
@@ -132,7 +132,7 @@ Exp* do_op(Exp* var1, Exp* var2, ops op, string specific_op="") {
     exit(1);
 }
 
-void vaildate_type(string x, string y){
+void vaildate_type(string& x, string& y){
     if (x != y)
     {
         output::errorMismatch(yylineno);
@@ -140,8 +140,8 @@ void vaildate_type(string x, string y){
     }
 }
 
-FuncSymbol* get_func(string name, std::vector<string> type_list){
-    FuncSymbol* f = (FuncSymbol*)(symbolTable.search_symbol(name, true));
+FuncSymbol* get_func(string& name, std::vector<string>& type_list){
+    auto* f = (FuncSymbol*)(symbolTable.search_symbol(name, true));
     if (f == nullptr) {
         errorUndefFunc(yylineno, name);
         exit(0);
@@ -150,7 +150,7 @@ FuncSymbol* get_func(string name, std::vector<string> type_list){
     return f;
 }
 
-void validate_func(std::vector<string> expected, std::vector<string> current, string name) {
+void validate_func(std::vector<string> expected, std::vector<string> current, string& name) {
     if (expected.size() != current.size())
     {
         errorPrototypeMismatch(yylineno, name, expected);
@@ -165,16 +165,47 @@ void validate_func(std::vector<string> expected, std::vector<string> current, st
     }
 }
 
-void bool_intersection(Exp *bool_exp) {
-    bool_exp->m_reg = Generator::new_tmp();
-    string truelist = buffer.genLabel();
-    int truelist_address = buffer.emit("br label @");
-    string falselist = buffer.genLabel();
-    int falselist_address = buffer.emit("br label @");
-    string end = buffer.genLabel();
-    buffer.emit(bool_exp->m_reg + " = phi i32 [1, %" + truelist + "], [0, %" + falselist + "]");
-    buffer.bpatch(buffer.makelist({truelist_address, FIRST}), end);
-    buffer.bpatch(buffer.makelist({falselist_address, FIRST}), end);
-    buffer.bpatch(bool_exp->m_trueList, truelist);
-    buffer.bpatch(bool_exp->m_falseList, falselist);
+void exp_to_bool(Exp *exp) {
+    exp->m_reg = Generator::new_tmp();
+    string true_label = buffer.genLabel();
+    int true_address = buffer.emit("br label @");
+    string false_label = buffer.genLabel();
+    int false_address = buffer.emit("br label @");
+    string end_label = buffer.genLabel();
+    buffer.emit(exp->m_reg + " = phi i32 [1, %" + true_label + "], [0, %" + false_label + "]");
+    buffer.bpatch(CodeBuffer::makelist({true_address, FIRST}), end_label);
+    buffer.bpatch(CodeBuffer::makelist({false_address, FIRST}), end_label);
+    buffer.bpatch(exp->m_trueList, true_label);
+    buffer.bpatch(exp->m_falseList, false_label);
+}
+
+void call_to_ir(Exp* call, Id* id, ExpList* expList, FuncSymbol* f, bool is_with_args) {
+    string ir_ret_type = f->return_type == "VOID" ? "void" : "i32";
+    string call_string;
+    if(f->return_type != "VOID") {
+        call->m_reg = Generator::new_tmp();
+        call_string += call->m_reg + " = ";
+    }
+
+    if(is_with_args) {
+        call_string += "call " + ir_ret_type + " " + f->ir_params() + " @" + id->m_name + "(";
+        if (!expList->m_exp.empty()) {
+            call_string += "i32 " + expList->m_exp.at(0)->m_reg;
+            for (unsigned long i=1; i < expList->m_exp.size(); i++) {
+                call_string += ", i32 " + expList->m_exp.at(i)->m_reg;
+            }
+        }
+        call_string += ")";
+    } else {
+        call_string += "call " + ir_ret_type + " " + f->ir_params() + " @" + id->m_name + "()";
+    }
+    buffer.emit(call_string);
+
+    if (f->return_type == "BOOL") {
+        string cond = Generator::new_tmp();
+        buffer.emit(cond + " = icmp ne i32 0, " + call->m_reg);
+        int address = buffer.emit("br i1 " + cond + ", label @, label @");
+        call->m_trueList = CodeBuffer::merge(call->m_trueList, CodeBuffer::makelist({address, FIRST}));
+        call->m_falseList = CodeBuffer::merge(call->m_falseList, CodeBuffer::makelist({address, SECOND}));
+    }
 }

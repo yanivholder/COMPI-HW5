@@ -78,7 +78,7 @@
 %type<funcArgsList> FormalsList;
 %type<funcArgsList> Formals;
 %type<funcArg> FormalDecl;
-%type<typeList> ExpList;
+%type<expList> ExpList;
 %type<exp> Call;
 %type<id> ID;
 %type<exp> NUM;
@@ -158,29 +158,88 @@ FormalsList     :   FormalDecl                                              {
 
 FormalDecl      : Type ID                                                   { $$ = new FuncArg($1->m_type, $2->m_name); }
 
-Statements      :   Statement                                               { }
-                |   Statements Statement                                    { }
+Statements      :   Statement                                               {
+                                                                              $$ = new Block();
+                                                                              $$->m_nextList = $1->m_nextList;
+                                                                              $$->m_breakList = $1->m_breakList;
+                                                                              $$->m_continueList = $1->m_continueList;
+                                                                            }
+                |   Statements Statement                                    {
+                                                                                $$ = new Block();
+                                                                                $$->m_nextList = CodeBuffer::merge($1->m_nextList, $2->m_nextList);
+                                                                                $$->m_breakList = CodeBuffer::merge($1->m_breakList, $2->m_breakList);
+                                                                                $$->m_continueList = CodeBuffer::merge($1->m_continueList, $2->m_continueList);
+                                                                            }
 
-Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           { }
-                |   Type ID SC                                              { symbolTable.add_var_symbol($2->m_name, $1->m_type); }
+Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           {
+                                                                                $$ = new Block();
+                                                                                $$->m_nextList = $3->m_nextList;
+                                                                                $$->m_breakList = $3->m_breakList;
+                                                                                $$->m_continueList = $3->m_continueList;
+                                                                            }
+                |   Type ID SC                                              {
+                                                                                symbolTable.add_var_symbol($2->m_name, $1->m_type);
+                                                                                string offset = to_string(symbolTable.search_symbol($2->m_name, false)->offset + args_amount);
+                                                                                string ptr = Generator::new_tmp();
+
+                                                                                buffer.emit(ptr + " = getelementptr [" + to_string(50 + args_amount) + " x i32], [" + to_string(50 + args_amount) + " x i32]* " + frame_pointer + ", i32 0, i32 " + offset);
+                                                                                buffer.emit("store i32 0, i32* " + ptr);
+                                                                                $$ = new Block();
+                                                                            }
                 |   Type ID ASSIGN Exp SC                                   {
                                                                                 validate_assign($1->m_type, $4->m_type);
                                                                                 symbolTable.add_var_symbol($2->m_name, $1->m_type);
+
+                                                                                if ($1->m_type == "BOOL") {
+                                                                                    exp_to_bool($4);
+                                                                                }
+
+                                                                                string offset = to_string(symbolTable.search_symbol($2->m_name, false)->offset + args_amount);
+                                                                                string ptr = Generator::new_tmp();
+
+                                                                                buffer.emit(ptr + " = getelementptr [" + to_string(50 + args_amount) + " x i32], [" + to_string(50 + args_amount) + " x i32]* " + frame_pointer + ", i32 0, i32 " + offset);
+                                                                                buffer.emit("store i32 " + $4->m_reg + ", i32* " + ptr);
+                                                                                $$ = new Block();
                                                                             }
                 |   ID ASSIGN Exp SC                                        {
                                                                                 string type = get_var_type($1->m_name);
                                                                                 validate_assign(type, $3->m_type);
+
+                                                                                if ($1->m_type == "BOOL") {
+                                                                                    exp_to_bool($4);
+                                                                                }
+
+                                                                                string offset = to_string(symbolTable.search_symbol($2->m_name, false)->offset + args_amount);
+                                                                                string ptr = Generator::new_tmp();
+
+                                                                                buffer.emit(ptr + " = getelementptr [" + to_string(50 + args_amount) + " x i32], [" + to_string(50 + args_amount) + " x i32]* " + frame_pointer + ", i32 0, i32 " + offset);
+                                                                                buffer.emit("store i32 " + $3->m_reg + ", i32* " + ptr);
+                                                                                $$ = new Block();
                                                                             }
-                |   Call SC                                                 { }
+                |   Call SC                                                 {
+                                                                                $$ = new Block();
+                                                                                if ($1->m_type == "BOOL") {
+                                                                                    string nextLabel = buffer.genLabel();
+                                                                                    buffer.bpatch($1->m_trueList, nextLabel);
+                                                                                    buffer.bpatch($1->m_falseList, nextLabel);
+                                                                                }
+                                                                            }
                 |   RETURN SC                                               {
                                                                                 return_happened = true;
                                                                                 vaildate_type(curr_func_ret_type, "VOID");
-                                                                                buffer.emit("ret i32 " + $2->m_reg);
+                                                                                buffer.emit("ret void");
+                                                                                $$ = new Block();
                                                                             }
                 |   RETURN Exp SC                                           {
                                                                                 return_happened = true;
                                                                                 validate_assign(curr_func_ret_type, $2->m_type);
-                                                                                buffer.emit("ret void");
+
+                                                                                if (curr_func_ret_type == "BOOL") {
+                                                                                    exp_to_bool($2);
+                                                                                }
+
+                                                                                buffer.emit("ret i32 " + $2->m_reg);
+                                                                                $$ = new Block();
                                                                             }
                 |   IF LPAREN Exp RPAREN MarkInIF OpenScope Statement CloseScope
                                                                             {
@@ -188,9 +247,9 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           { }
                                                                                 $$ = new Block();
                                                                                 $$->m_breakList = $7->m_breakList;
                                                                                 $$->m_continueList = $7->m_continueList;
-                                                                                $$->m_nextList = buffer.merge($3->m_falseList, $7->m_nextList);
+                                                                                $$->m_nextList = CodeBuffer::merge($3->m_falseList, $7->m_nextList);
                                                                                 // int address = buffer.emit("br label @");
-                                                                                // $$->m_nextList = buffer.merge($$->m_nextList, buffer.makelist({address, FIRST}));
+                                                                                // $$->m_nextList = CodeBuffer::merge($$->m_nextList, CodeBuffer::makelist({address, FIRST}));
                                                                                 string label = buffer.genLabel();
                                                                                 buffer.bpatch($$->m_nextList, label);
                                                                             }
@@ -201,13 +260,13 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           { }
                                                                                 buffer.bpatch($3->m_trueList, $5->m_label);
 
                                                                                 $$ = new Block();
-                                                                                $$->m_breakList = buffer.merge($7->m_breakList, $13->m_breakList);
-                                                                                $$->m_continueList = buffer.merge($7->m_continueList, $13->m_continueList);
-                                                                                $$->m_nextList = buffer.merge($7->m_nextList, $13->m_nextList);
-                                                                                $$->m_nextList = buffer.merge($$->m_nextList, $9->m_nextList);
+                                                                                $$->m_breakList = CodeBuffer::merge($7->m_breakList, $13->m_breakList);
+                                                                                $$->m_continueList = CodeBuffer::merge($7->m_continueList, $13->m_continueList);
+                                                                                $$->m_nextList = CodeBuffer::merge($7->m_nextList, $13->m_nextList);
+                                                                                $$->m_nextList = CodeBuffer::merge($$->m_nextList, $9->m_nextList);
 
                                                                                 // int address = buffer.emit("br label @");
-                                                                                // $$->m_nextList = buffer.merge($$->m_nextList, buffer.makelist({address, FIRST}));
+                                                                                // $$->m_nextList = CodeBuffer::merge($$->m_nextList, CodeBuffer::makelist({address, FIRST}));
                                                                                 string label = buffer.genLabel();
                                                                                 buffer.bpatch($$->m_nextList, label);
                                                                             }
@@ -224,14 +283,33 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           { }
                                                                                 buffer.bpatch($4->m_trueList, $7->m_label);
                                                                                 buffer.bpatch($8->m_nextList, $3->m_label);
 
-                                                                                $$->m_nextList = buffer.merge($4->m_falseList, $8->m_breakList);
+                                                                                $$->m_nextList = CodeBuffer::merge($4->m_falseList, $8->m_breakList);
 
                                                                                 string label = buffer.genLabel();
                                                                                 buffer.bpatch($$->m_nextList, label);
-
+                                                                                buffer.bpatch($8->m_breakList, label);
+                                                                                buffer.bpatch($4->m_falseList, label);
                                                                             }
-                |   BREAK SC                                                {   if(!during_while && !during_switch) {errorUnexpectedBreak(yylineno); exit(1);} }
-                |   CONTINUE SC                                             {   if(!during_while) {errorUnexpectedContinue(yylineno); exit(1);} }
+                |   BREAK SC                                                {
+                                                                                if(!during_while && !during_switch) {
+                                                                                    errorUnexpectedBreak(yylineno);
+                                                                                    exit(1);
+                                                                                }
+
+                                                                                $$ = new Block();
+                                                                                int address = buffer.emit("br label @");
+                                                                                $$->m_breakList = CodeBuffer::makelist({address, FIRST});
+                                                                            }
+                |   CONTINUE SC                                             {
+                                                                                if(!during_while) {
+                                                                                    errorUnexpectedContinue(yylineno);
+                                                                                    exit(1);
+                                                                                }
+
+                                                                                $$ = new Block();
+                                                                                int address = buffer.emit("br label @");
+                                                                                $$->m_continueList = CodeBuffer::makelist({address, FIRST});
+                                                                            }
                 |   SWITCH LPAREN Exp RPAREN                                {
                                                                                 validate_assign("INT", $3->m_type);
                                                                                 during_switch++;
@@ -247,39 +325,94 @@ MarkInIF    :  /* epsilon */                                                {
 Call        :   ID LPAREN ExpList RPAREN                                    {
                                                                                 FuncSymbol* f = get_func($1->m_name, $3->m_typeList);
                                                                                 $$ = new Exp(f->return_type);
+
+                                                                                if ($1->m_name == "print") {
+                                                                                    auto strExp = $3->m_exp.at(0);
+                                                                                    buffer.emit("call void @print(i8* getelementptr ([" + strExp->m_size + " x i8], [" + strExp->m_size + " x i8]* " + strExp->m_reg + ", i32 0, i32 0))");
+                                                                                } else {
+                                                                                    call_to_ir($$, $1, $3, f, true);
+                                                                                }
                                                                             }
             |   ID LPAREN RPAREN                                            {
                                                                                 FuncSymbol* f = get_func($1->m_name, std::vector<string>());
                                                                                 $$ = new Exp(f->return_type);
+                                                                                
+                                                                                call_to_ir($$, $1, nullptr, f, false);
                                                                             }
 
 ExpList     :   Exp                                                         {
-                                                                              $$ = new TypeList();
+                                                                              $$ = new ExpList();
                                                                               $$->m_typeList.push_back($1->m_type);
+                                                                              
+                                                                              $$->m_exp.push_back($1);
+                                                                              if ($1->m_type == "BOOL") {
+                                                                                  exp_to_bool($1);
+                                                                              }
                                                                             }
             |   Exp COMMA ExpList                                           {
-                                                                                $$ = new TypeList();
+                                                                                $$ = new ExpList();
                                                                                 $$->m_typeList = $3->m_typeList;
                                                                                 $$->m_typeList.push_back($1->m_type);
+                                                                                
+                                                                                if ($1->m_type == "BOOL") {
+                                                                                    exp_to_bool($1);
+                                                                                }
                                                                             }
 
 Type        :   INT                                                         { $$ = new Exp("INT"); }
             |   BYTE                                                        { $$ = new Exp("BYTE"); }
             |   BOOL                                                        { $$ = new Exp("BOOL"); }
 
-Exp         :   LPAREN Exp RPAREN                                           { $$ = new Exp($2->m_type); curr_exp_type = "INT"; }
+Exp         :   LPAREN Exp RPAREN                                           {
+                                                                                $$ = new Exp($2->m_type);
+                                                                                curr_exp_type = "INT";
+
+                                                                                $$->m_reg = $2->m_reg;
+                                                                                $$->m_trueList = $2->m_trueList;
+                                                                                $$->m_falseList = $2->m_falseList;
+                                                                            }
             |   Exp BINOP_ADD Exp                                           { $$ = do_op($1, $3, PBINOP, "add"); curr_exp_type = "INT"; }
             |   Exp BINOP_SUB Exp                                           { $$ = do_op($1, $3, PBINOP, "sub"); curr_exp_type = "INT"; }
             |   Exp BINOP_MUL Exp                                           { $$ = do_op($1, $3, PBINOP, "mul"); curr_exp_type = "INT"; }
             |   Exp BINOP_DIV Exp                                           { $$ = do_op($1, $3, PBINOP, "sdiv"); curr_exp_type = "INT"; }
             |   ID                                                          {
+                                                                              auto sym = symbolTable.search_symbol($1->m_name, false);
                                                                               string type = get_var_type($1->m_name);
                                                                               $$ = new Exp(type);
                                                                               $$->m_varName = $1->m_name;
                                                                               curr_exp_type = type;
+
+                                                                              string ptr = Generator::new_tmp();
+                                                                              $$->m_reg = Generator::new_tmp();
+                                                                              string offset = to_string(sym->m_offset + args_amount);
+                                                                              buffer.emit(ptr + " = getelementptr [" + to_string(50 + args_amount) + " x i32], [" + to_string(50 + args_amount) + " x i32]* " + frame_pointer + ", i32 0, i32 " + offset);
+                                                                              buffer.emit($$->m_reg + " = load i32, i32* " + ptr);
+
+                                                                              if (sym->m_type == "BOOL") {
+                                                                                  string cond = Generator::new_tmp();
+                                                                                  buffer.emit(cond + " = icmp eq i32 " + $$->m_reg + ", 1");
+                                                                                  int address = buffer.emit("br i1 " + cond + ", label @, label @");
+                                                                                  $$->m_trueList = CodeBuffer::merge($$->m_trueList, CodeBuffer::makelist({address, FIRST}));
+                                                                                  $$->m_falseList = CodeBuffer::merge($$->m_falseList, CodeBuffer::makelist({address, SECOND}));
+                                                                              }
                                                                             }
-            |   Call                                                        { $$ = new Exp($1->m_type); curr_exp_type = $1->m_type; }
-            |   NUM                                                         { $$ = new Exp("INT"); curr_exp_type = "INT"; }
+            |   Call                                                        {
+                                                                                $$ = new Exp($1->m_type);
+                                                                                curr_exp_type = $1->m_type;
+
+                                                                                if ($$->m_type != "VOID") {
+                                                                                    $$->m_reg = $1->m_reg;
+                                                                                }
+                                                                                $$->m_trueList = $1->m_trueList;
+                                                                                $$->m_falseList = $1->m_falseList;
+                                                                            }
+            |   NUM                                                         {
+                                                                                $$ = new Exp("INT");
+                                                                                curr_exp_type = "INT";
+
+                                                                                $$->m_reg = Generator::new_tmp();
+                                                                                buffer.emit($$->m_reg + " = add i32 0, " + to_string(yylval.val));
+                                                                            }
             |   NUM B                                                       {
                                                                                 if (yylval.val > 255) {
                                                                                     errorByteTooLarge(yylineno, to_string(yylval.val));
@@ -287,10 +420,33 @@ Exp         :   LPAREN Exp RPAREN                                           { $$
                                                                                 }
                                                                                 $$ = new Exp("BYTE");
                                                                                 curr_exp_type = "BYTE";
+
+                                                                                $$->m_reg = Generator::new_tmp();
+                                                                                buffer.emit($$->m_reg + " = add i32 0, " + to_string(yylval.val));
                                                                             }
-            |   STRING                                                      { $$ = new Exp("STRING"); curr_exp_type = "STRING";}
-            |   TRUE                                                        { $$ = new Exp("BOOL"); curr_exp_type = "BOOL"; }
-            |   FALSE                                                       { $$ = new Exp("BOOL"); curr_exp_type = "BOOL"; }
+            |   STRING                                                      {
+                                                                                $$ = new Exp("STRING");
+                                                                                curr_exp_type = "STRING";
+
+                                                                                $$->m_reg = varGenerator.freshString();
+                                                                                $$->m_size = to_string(yylval.id->m_name.size() + 1);
+                                                                                buffer.emitGlobal($$->m_reg + " = global [" + $$->m_size + " x i8] c\"" + yylval.id->m_name + "\\00\"");
+                                                                            }
+            |   TRUE                                                        {
+                                                                                $$ = new Exp("BOOL");
+                                                                                curr_exp_type = "BOOL";
+
+                                                                                int address = buffer.emit("br label @");
+                                                                                $$->m_trueList = CodeBuffer::merge($$->m_trueList, CodeBuffer::makelist({address, FIRST}));
+
+                                                                            }
+            |   FALSE                                                       {
+                                                                                $$ = new Exp("BOOL");
+                                                                                curr_exp_type = "BOOL";
+
+                                                                                int address = buffer.emit("br label @");
+                                                                                $$->m_falseList = CodeBuffer::merge($$->m_falseList, CodeBuffer::makelist({address, FIRST}));
+                                                                            }
             |   NOT Exp                                                     { $$ = do_op($2, $2, PNOT); curr_exp_type = "BOOL"; }
             |   Exp AND M Exp                                               {
                                                                                 buffer.bpatch($1->m_trueList, $3->m_label);
@@ -322,7 +478,7 @@ M           :   /* epsilon */                                               { $$
 N           :   /* epsilon */                                               {
                                                                               int address = buffer.emit("br label @");
                                                                               $$ = new Block();
-                                                                              $$->m_nextList = buffer.makelist({address, FIRST});
+                                                                              $$->m_nextList = CodeBuffer::makelist({address, FIRST});
                                                                             }
 
 %%

@@ -63,13 +63,16 @@ struct FuncArgsList {
     }
 };
 
-struct TypeList {
-
+struct ExpList {
+    vector<Exp*> m_exp;
     vector<string> m_typeList;
-    TypeList() {
+
+    ExpList() {
+        this->m_exp = vector<Exp*>();
         this->m_typeList = vector<string>();
     }
-    friend ostream& operator<<(ostream& os, const TypeList& sl) {
+
+    friend ostream& operator<<(ostream& os, const ExpList& sl) {
         for (auto & it : sl.m_typeList) {
             os << it << ", ";
         }
@@ -102,7 +105,7 @@ typedef union Node
     Id* id;
     FuncArg* funcArg;
     FuncArgsList* funcArgsList;
-    TypeList* typeList;
+    ExpList* expList;
     int val;
     Label* label;
     Block* block;
