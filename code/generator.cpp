@@ -6,7 +6,10 @@
 #include <string>
 using namespace std;
 
-Generator::Generator() : var_num(0), str_num(0) {}
+size_t Generator::var_num = 0;
+size_t Generator::str_num = 0;
+
+Generator::Generator() {}
 
 string Generator::new_tmp() {
     string var = "%t" + to_string(var_num);

@@ -14,10 +14,8 @@ using namespace std;
 
 
 struct Exp {
-    string m_varName;
-    string m_type;
+    string m_name, m_type, m_size, m_reg;
     int m_val;
-    string m_reg;
     size_t string_len;
     vector<pair<int,BranchLabelIndex>> m_trueList;
     vector<pair<int,BranchLabelIndex>> m_falseList;

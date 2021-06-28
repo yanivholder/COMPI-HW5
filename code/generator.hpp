@@ -9,11 +9,13 @@
 using namespace std;
 
 class Generator {
+
+public:
     static size_t var_num;
     static size_t str_num;
 
-public:
     Generator();
+
     static string new_tmp();
     static string new_string();
 };

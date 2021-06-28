@@ -11,7 +11,7 @@ bool is_number(Exp* var) {
         return false;
 }
 
-void validate_assign(string& var1, string& var2) {
+void validate_assign(const string& var1, const string& var2) {
 
     if(var1 == "VOID" || !(var1 == var2 || (var1 == "INT" && var2 == "BYTE"))) {
         errorMismatch(yylineno);
@@ -19,7 +19,7 @@ void validate_assign(string& var1, string& var2) {
     }
 }
 
-string get_var_type(string& var_name) {
+string get_var_type(string& var_name, SymbolTable& symbolTable) {
     auto* var = (VarSymbol*)symbolTable.search_symbol(var_name, false);
     if(var == nullptr) {
         errorUndef(yylineno, var_name);
@@ -32,7 +32,7 @@ static void emit_op(const string& a, const string& b, const string& c, const str
     buff.emit(a + " = " + op + " i32 " + b + ", " + c);
 }
 
-static void div_handler(Exp* var1, Exp* var2, string& m_reg){
+static void div_handler(Exp* var1, Exp* var2, string& m_reg, CodeBuffer &buffer){
     // first check for a zero div error
     string cond = Generator::new_tmp();
     buffer.emit(cond + " = icmp eq i32 0, " + var2->m_reg);
@@ -55,7 +55,7 @@ static void div_handler(Exp* var1, Exp* var2, string& m_reg){
 
 }
 
-Exp* do_op(Exp* var1, Exp* var2, ops op, const string& specific_op="") {
+Exp* do_op(Exp* var1, Exp* var2, ops op, string specific_op, CodeBuffer& buffer) {
     if(var1->m_type == "STRING" || var2->m_type == "STRING") {
         goto err;
     }
@@ -111,7 +111,7 @@ Exp* do_op(Exp* var1, Exp* var2, ops op, const string& specific_op="") {
             if (is_number(var1) && is_number(var2)){
                 string m_reg = Generator::new_tmp();
                 if (specific_op == "sdiv") // special handling
-                    div_handler(var1, var2, m_reg);
+                    div_handler(var1, var2, m_reg, buffer);
                 else
                     emit_op(m_reg, var1->m_reg, var2->m_reg, specific_op, buffer);
 
@@ -132,7 +132,7 @@ Exp* do_op(Exp* var1, Exp* var2, ops op, const string& specific_op="") {
     exit(1);
 }
 
-void vaildate_type(string& x, string& y){
+void vaildate_type(const string& x, const string& y){
     if (x != y)
     {
         output::errorMismatch(yylineno);
@@ -140,8 +140,8 @@ void vaildate_type(string& x, string& y){
     }
 }
 
-FuncSymbol* get_func(string& name, std::vector<string>& type_list){
-    auto* f = (FuncSymbol*)(symbolTable.search_symbol(name, true));
+FuncSymbol* get_func(const string& name, const std::vector<string>& type_list, SymbolTable& symbolTable){
+    auto* f = dynamic_cast<FuncSymbol*>(symbolTable.search_symbol(name, true));
     if (f == nullptr) {
         errorUndefFunc(yylineno, name);
         exit(0);
@@ -150,7 +150,7 @@ FuncSymbol* get_func(string& name, std::vector<string>& type_list){
     return f;
 }
 
-void validate_func(std::vector<string> expected, std::vector<string> current, string& name) {
+void validate_func(std::vector<string> expected, const std::vector<string>& current, string& name) {
     if (expected.size() != current.size())
     {
         errorPrototypeMismatch(yylineno, name, expected);
@@ -165,7 +165,7 @@ void validate_func(std::vector<string> expected, std::vector<string> current, st
     }
 }
 
-void exp_to_bool(Exp *exp) {
+void exp_to_bool(Exp *exp, CodeBuffer& buffer) {
     exp->m_reg = Generator::new_tmp();
     string true_label = buffer.genLabel();
     int true_address = buffer.emit("br label @");
@@ -179,7 +179,7 @@ void exp_to_bool(Exp *exp) {
     buffer.bpatch(exp->m_falseList, false_label);
 }
 
-void call_to_ir(Exp* call, Id* id, ExpList* expList, FuncSymbol* f, bool is_with_args) {
+void call_to_ir(Exp* call, Id* id, ExpList* expList, FuncSymbol* f, bool is_with_args, CodeBuffer& buffer) {
     string ir_ret_type = f->return_type == "VOID" ? "void" : "i32";
     string call_string;
     if(f->return_type != "VOID") {
