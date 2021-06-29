@@ -99,10 +99,10 @@ void SymbolTable::open_first_scope() {
 }
 
 void SymbolTable::close_scope() {
-    output::endScope();
-    for (auto symbol : tables_stack.back()->symbols) {
-        symbol->print();
-    }
+    // output::endScope();
+    // for (auto symbol : tables_stack.back()->symbols) {
+    //     symbol->print();
+    // }
     delete tables_stack.back();
     tables_stack.pop_back();
     offset_stack.pop();

@@ -42,5 +42,7 @@ void exp_to_bool(Exp *bool_exp, CodeBuffer& buffer);
 
 void call_to_ir(Exp* call, Id* id, ExpList* expList, FuncSymbol* f, bool is_with_args, CodeBuffer& buffer);
 
+void declarePrerequisites(CodeBuffer& buffer);
+
 
 #endif //CODE_PARSER_FUNCS_HPP

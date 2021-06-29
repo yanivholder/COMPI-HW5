@@ -99,7 +99,7 @@
 %%
 
 
-Program     :   Funcs                                                       { symbolTable.close_global_scope(); }
+Program     :   { declarePrerequisites(buffer); } Funcs                     { symbolTable.close_global_scope(); }
 
 Funcs       :   /* epsilon */                                               {
                                                                                 if(string(yytext) != "") {
@@ -259,7 +259,7 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           {
                                                                                 buffer.emit("ret i32 " + $2->m_reg);
                                                                                 $$ = new Block();
                                                                             }
-                |   IfScope IF
+                |   IfScope
                                                                             {
                                                                                 buffer.bpatch($1->m_exp->m_trueList, $1->m_label);
                                                                                 $$ = new Block();
@@ -501,10 +501,11 @@ N           :   /* epsilon */                                               {
 
 %%
 
-int main() {
-	return yyparse();
+int main(){
+    yyparse();
+    buffer.printGlobalBuffer();
+    buffer.printCodeBuffer();
 }
-
 int yyerror(const char* message) {
 	errorSyn(yylineno);
 	exit(1);

@@ -209,3 +209,32 @@ void call_to_ir(Exp* call, Id* id, ExpList* expList, FuncSymbol* f, bool is_with
         call->m_falseList = CodeBuffer::merge(call->m_falseList, CodeBuffer::makelist({address, SECOND}));
     }
 }
+
+void declarePrerequisites(CodeBuffer& buffer) {
+    
+    // Standard C function declarations
+    buffer.emit("declare i32 @printf(i8*, ...)");
+    buffer.emit("declare void @exit(i32)");
+    buffer.emit("declare i8* @malloc(i32)");
+    buffer.emit("declare void @free(i8*)");
+    buffer.emit("declare void @llvm.memset.p0i8.i32(i8*, i8, i32, i1)");
+    buffer.emit("declare void @llvm.memcpy.p0i8.p0i8.i32(i8*, i8*, i32, i1)");
+
+
+    // Global declarations
+    buffer.emitGlobal("@.int_specifier = constant [4 x i8] c\"%d\\0A\\00\"");
+    buffer.emitGlobal("@.str_specifier = constant [4 x i8] c\"%s\\0A\\00\"");
+    buffer.emitGlobal("@zero_div_error = constant [24 x i8] c\"Error division by zero\n\\00\"");
+
+    // print declaration
+    buffer.emit("define void @printi(i32) {");
+    buffer.emit("call i32 (i8*, ...) @printf(i8* getelementptr ([4 x i8], [4 x i8]* @.int_specifier, i32 0, i32 0), i32 %0)");
+    buffer.emit("ret void");
+    buffer.emit("}");
+
+    // printi declaration
+    buffer.emit("define void @print(i8*) {");
+    buffer.emit("call i32 (i8*, ...) @printf(i8* getelementptr ([4 x i8], [4 x i8]* @.str_specifier, i32 0, i32 0), i8* %0)");
+    buffer.emit("ret void");
+    buffer.emit("}");
+}
