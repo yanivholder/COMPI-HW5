@@ -191,7 +191,7 @@ void call_to_ir(Exp* call, Id* id, ExpList* expList, FuncSymbol* f, bool is_with
         call_string += "call " + ir_ret_type + " " + f->ir_params() + " @" + id->m_name + "(";
         if (!expList->m_exp.empty()) {
             call_string += "i32 " + expList->m_exp.at(0)->m_reg;
-            for (unsigned long i=1; i < expList->m_exp.size(); i++) {
+            for (unsigned long i=1; i < expList->m_exp.size()-1; i++) {
                 call_string += ", i32 " + expList->m_exp.at(i)->m_reg;
             }
         }

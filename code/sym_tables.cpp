@@ -28,7 +28,7 @@ string FuncSymbol::ir_params(){
     string res("(");
     if (!this->args_type.empty()){
         res += "i32";
-        for (int i=0; i < this->args_type.size(); i++){
+        for (int i=0; i < this->args_type.size()-1; i++){
             res += ", i32";
         }
     }

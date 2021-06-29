@@ -122,7 +122,8 @@ FuncDecl    :   RetType ID LPAREN Formals RPAREN                            { re
 
                                                                               buffer.emit("define " + ir_ret_type + " @" + $2->m_name + func_sym->ir_params() + " {");
                                                                               frame_pointer = Generator::new_tmp();
-                                                                              int args_amount = $4->m_argsList.size();
+                                                                              args_amount = $4->m_argsList.size();
+                                                                              buffer.emit(frame_pointer + " = alloca [" + to_string(50 + args_amount) + " x i32]");
                                                                               for (int i = 0; i < args_amount; i++) {
                                                                                  string index = to_string(args_amount - i - 1);
                                                                                  string reg = "%" + to_string(i);
@@ -272,8 +273,8 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           {
                                                                                 $$->m_breakList = $1->m_block->m_breakList;
                                                                                 $$->m_continueList = $1->m_block->m_continueList;
                                                                                 $$->m_nextList = CodeBuffer::merge($1->m_exp->m_falseList, $1->m_block->m_nextList);
-                                                                                // int address = buffer.emit("br label @");
-                                                                                // $$->m_nextList = CodeBuffer::merge($$->m_nextList, CodeBuffer::makelist({address, FIRST}));
+                                                                                int address = buffer.emit("br label @");
+                                                                                $$->m_nextList = CodeBuffer::merge($$->m_nextList, CodeBuffer::makelist({address, FIRST}));
                                                                                 string label = buffer.genLabel();
                                                                                 buffer.bpatch($$->m_nextList, label);
                                                                             }
@@ -288,8 +289,8 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           {
                                                                                 $$->m_nextList = CodeBuffer::merge($1->m_block->m_nextList, $2->m_block->m_nextList);
                                                                                 // $$->m_nextList = CodeBuffer::merge($$->m_nextList, $9->m_nextList);
 
-                                                                                // int address = buffer.emit("br label @");
-                                                                                // $$->m_nextList = CodeBuffer::merge($$->m_nextList, CodeBuffer::makelist({address, FIRST}));
+                                                                                int address = buffer.emit("br label @");
+                                                                                $$->m_nextList = CodeBuffer::merge($$->m_nextList, CodeBuffer::makelist({address, FIRST}));
                                                                                 string label = buffer.genLabel();
                                                                                 buffer.bpatch($$->m_nextList, label);
                                                                             }
@@ -307,9 +308,9 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           {
                                                                                 buffer.bpatch($8->m_nextList, $3->m_label);
 
                                                                                 $$->m_nextList = CodeBuffer::merge($4->m_falseList, $8->m_breakList);
-
+                                                                                buffer.emit("br label %" + $3->m_label);
                                                                                 string label = buffer.genLabel();
-                                                                                buffer.bpatch($$->m_nextList, label);
+                                                                                // buffer.bpatch($$->m_nextList, label);
                                                                                 buffer.bpatch($8->m_breakList, label);
                                                                                 buffer.bpatch($4->m_falseList, label);
                                                                             }
