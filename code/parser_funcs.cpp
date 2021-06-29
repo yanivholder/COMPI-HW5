@@ -211,7 +211,6 @@ void call_to_ir(Exp* call, Id* id, ExpList* expList, FuncSymbol* f, bool is_with
 }
 
 void declarePrerequisites(CodeBuffer& buffer) {
-    
     // Standard C function declarations
     buffer.emit("declare i32 @printf(i8*, ...)");
     buffer.emit("declare void @exit(i32)");

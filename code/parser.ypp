@@ -32,7 +32,10 @@
 %token TRUE
 %token FALSE
 %token RETURN
-%token IF
+
+%nonassoc IF
+%nonassoc ELSE
+
 
 %token WHILE
 %token BREAK
@@ -73,7 +76,6 @@
 
 %nonassoc RPAREN
 %nonassoc LPAREN
-%nonassoc ELSE
 
 %type<exp> Exp;
 %type<exp> Type;
@@ -162,19 +164,23 @@ FormalsList     :   FormalDecl                                              {
                                                                                 $$->m_argsList.push_back($1->m_arg);
                                                                             }
 
-FormalDecl      : Type ID                                                   { $$ = new FuncArg($1->m_type, $2->m_name); }
+FormalDecl      :   Type ID                                                   { $$ = new FuncArg($1->m_type, $2->m_name); }
 
-IfScope         : IF LPAREN Exp RPAREN MarkInIF M                           {
-                                                                                if ($3->m_type != "BOOL") {
-                                                                                     output::errorMismatch(yylineno);
-                                                                                     exit(0);
-                                                                                  }
-                                                                            }
-                    OpenScope Statement CloseScope                          { $$ = new Scope($3, $5->m_label, $9->m_nextList, $9->m_breakList, $9->m_continueList); }
+IfScope         :   IF LPAREN Exp RPAREN MarkInIF OpenScope Statement CloseScope { $$ = new Scope($3, $5->m_label, $7->m_nextList, $7->m_breakList, $7->m_continueList); }
 
 ElseScope       :   ELSE N M OpenScope Statement CloseScope                 { $$ = new Scope(nullptr, $3->m_label, buffer.merge($2->m_nextList, $5->m_nextList), buffer.merge($2->m_breakList, $5->m_breakList), buffer.merge($2->m_continueList, $5->m_continueList)); }
 
+OpenScope   :   /* epsilon */                                               { symbolTable.open_scope(); }
 
+CloseScope  :   /* epsilon */                                               { symbolTable.close_scope(); }
+
+M           :   /* epsilon */                                               { $$ = new Label(buffer.genLabel()); }
+
+N           :   /* epsilon */                                               {
+                                                                              int address = buffer.emit("br label @");
+                                                                              $$ = new Block();
+                                                                              $$->m_nextList = CodeBuffer::makelist({address, FIRST});
+                                                                            }
 
 Statements      :   Statement                                               {
                                                                               $$ = new Block();
@@ -259,7 +265,7 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           {
                                                                                 buffer.emit("ret i32 " + $2->m_reg);
                                                                                 $$ = new Block();
                                                                             }
-                |   IfScope
+                |   IfScope %prec IF
                                                                             {
                                                                                 buffer.bpatch($1->m_exp->m_trueList, $1->m_label);
                                                                                 $$ = new Block();
@@ -446,7 +452,7 @@ Exp         :   LPAREN Exp RPAREN                                           {
                                                                                 $$ = new Exp("STRING");
                                                                                 curr_exp_type = "STRING";
 
-                                                                                $$->m_reg = Generator::new_tmp();
+                                                                                $$->m_reg = Generator::new_string();
                                                                                 $$->m_size = to_string(yylval.id->m_name.size() + 1);
                                                                                 buffer.emitGlobal($$->m_reg + " = global [" + $$->m_size + " x i8] c\"" + yylval.id->m_name + "\\00\"");
                                                                             }
@@ -487,17 +493,6 @@ CaseList         :   CaseDecl CaseList                                      { }
 
 CaseDecl        :   CASE NUM COLON Statements                               { }
 
-OpenScope   :   /* epsilon */                                               { symbolTable.open_scope(); }
-
-CloseScope  :   /* epsilon */                                               { symbolTable.close_scope(); }
-
-M           :   /* epsilon */                                               { $$ = new Label(buffer.genLabel()); }
-
-N           :   /* epsilon */                                               {
-                                                                              int address = buffer.emit("br label @");
-                                                                              $$ = new Block();
-                                                                              $$->m_nextList = CodeBuffer::makelist({address, FIRST});
-                                                                            }
 
 %%
 
