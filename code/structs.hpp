@@ -97,6 +97,25 @@ struct Block {
     }
 };
 
+struct Scope {
+    Exp* m_exp;
+    string m_label;
+    Block* m_block;
+
+    Scope (Exp* exp, const string& label_name, const vector<pair<int,BranchLabelIndex>>& next_list, const vector<pair<int,BranchLabelIndex>>& break_list, const vector<pair<int,BranchLabelIndex>>& continue_list) {
+        if (exp) {
+            this->m_exp = new Exp(*exp);
+        } else {
+            this->m_exp = nullptr;
+        }
+        this->m_label = string(label_name);
+        this->m_block = new Block();
+        this->m_block->m_nextList = vector<pair<int,BranchLabelIndex>>(next_list);
+        this->m_block->m_breakList = vector<pair<int,BranchLabelIndex>>(break_list);
+        this->m_block->m_continueList = vector<pair<int,BranchLabelIndex>>(continue_list);
+    }
+};
+
 typedef union Node
 {
     Exp* exp;
@@ -107,6 +126,7 @@ typedef union Node
     int val;
     Label* label;
     Block* block;
+    Scope* scope;
 } STYPE;
 
 #define YYSTYPE STYPE

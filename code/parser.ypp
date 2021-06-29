@@ -92,6 +92,9 @@
 %type<block> N;
 %type<block> Statement;
 %type<block> Statements;
+%type<scope> IfScope;
+%type<scope> ElseScope;
+
 
 %%
 
@@ -160,6 +163,18 @@ FormalsList     :   FormalDecl                                              {
                                                                             }
 
 FormalDecl      : Type ID                                                   { $$ = new FuncArg($1->m_type, $2->m_name); }
+
+IfScope         : IF LPAREN Exp RPAREN MarkInIF M                           {
+                                                                                if ($3->m_type != "BOOL") {
+                                                                                     output::errorMismatch(yylineno);
+                                                                                     exit(0);
+                                                                                  }
+                                                                            }
+                    OpenScope Statement CloseScope                          { $$ = new Scope($3, $5->m_label, $9->m_nextList, $9->m_breakList, $9->m_continueList); }
+
+ElseScope       :   ELSE N M OpenScope Statement CloseScope                 { $$ = new Scope(nullptr, $3->m_label, buffer.merge($2->m_nextList, $5->m_nextList), buffer.merge($2->m_breakList, $5->m_breakList), buffer.merge($2->m_continueList, $5->m_continueList)); }
+
+
 
 Statements      :   Statement                                               {
                                                                               $$ = new Block();
@@ -244,29 +259,28 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           {
                                                                                 buffer.emit("ret i32 " + $2->m_reg);
                                                                                 $$ = new Block();
                                                                             }
-                |   IF LPAREN Exp RPAREN MarkInIF OpenScope Statement CloseScope
+                |   IfScope IF
                                                                             {
-                                                                                buffer.bpatch($3->m_trueList, $5->m_label);
+                                                                                buffer.bpatch($1->m_exp->m_trueList, $1->m_label);
                                                                                 $$ = new Block();
-                                                                                $$->m_breakList = $7->m_breakList;
-                                                                                $$->m_continueList = $7->m_continueList;
-                                                                                $$->m_nextList = CodeBuffer::merge($3->m_falseList, $7->m_nextList);
+                                                                                $$->m_breakList = $1->m_block->m_breakList;
+                                                                                $$->m_continueList = $1->m_block->m_continueList;
+                                                                                $$->m_nextList = CodeBuffer::merge($1->m_exp->m_falseList, $1->m_block->m_nextList);
                                                                                 // int address = buffer.emit("br label @");
                                                                                 // $$->m_nextList = CodeBuffer::merge($$->m_nextList, CodeBuffer::makelist({address, FIRST}));
                                                                                 string label = buffer.genLabel();
                                                                                 buffer.bpatch($$->m_nextList, label);
                                                                             }
-                |   IF LPAREN Exp RPAREN MarkInIF OpenScope Statement CloseScope N
-                ELSE M OpenScope Statement CloseScope
+                |   IfScope ElseScope
                                                                             {
-                                                                                buffer.bpatch($3->m_falseList, $11->m_label);
-                                                                                buffer.bpatch($3->m_trueList, $5->m_label);
+                                                                                buffer.bpatch($1->m_exp->m_falseList, $2->m_label);
+                                                                                buffer.bpatch($1->m_exp->m_trueList, $1->m_label);
 
                                                                                 $$ = new Block();
-                                                                                $$->m_breakList = CodeBuffer::merge($7->m_breakList, $13->m_breakList);
-                                                                                $$->m_continueList = CodeBuffer::merge($7->m_continueList, $13->m_continueList);
-                                                                                $$->m_nextList = CodeBuffer::merge($7->m_nextList, $13->m_nextList);
-                                                                                $$->m_nextList = CodeBuffer::merge($$->m_nextList, $9->m_nextList);
+                                                                                $$->m_breakList = CodeBuffer::merge($1->m_block->m_breakList, $2->m_block->m_breakList);
+                                                                                $$->m_continueList = CodeBuffer::merge($1->m_block->m_continueList, $2->m_block->m_continueList);
+                                                                                $$->m_nextList = CodeBuffer::merge($1->m_block->m_nextList, $2->m_block->m_nextList);
+                                                                                // $$->m_nextList = CodeBuffer::merge($$->m_nextList, $9->m_nextList);
 
                                                                                 // int address = buffer.emit("br label @");
                                                                                 // $$->m_nextList = CodeBuffer::merge($$->m_nextList, CodeBuffer::makelist({address, FIRST}));
