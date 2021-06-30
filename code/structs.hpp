@@ -8,6 +8,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <stack>
 #include "bp.hpp"
 
 using namespace std;
@@ -116,6 +117,40 @@ struct Scope {
     }
 };
 
+struct Case
+{
+    Block* statements;
+    string m_label;
+    int m_val;
+    Case(int arg_m_val, string arg_m_label, Block* arg_statements) {
+
+        this->statements = new Block();
+        this->statements->m_nextList = arg_statements->m_nextList;
+        this->statements->m_breakList = arg_statements->m_breakList;
+        this->statements->m_continueList = arg_statements->m_continueList;
+
+        this->m_label =arg_m_label;
+        this->m_val = arg_m_val;
+    }
+
+};
+
+struct CaseStack
+{
+    std::stack<Case*> case_stack;
+    Case* default_case;
+    vector<pair<int,BranchLabelIndex>> m_nextList;
+    CaseStack() {}
+    CaseStack(std::stack<Case*> arg_case_stack) {
+        this->case_stack = arg_case_stack;
+    }
+
+    
+};
+
+
+
+
 typedef union Node
 {
     Exp* exp;
@@ -127,6 +162,8 @@ typedef union Node
     Label* label;
     Block* block;
     Scope* scope;
+    CaseStack* case_stack;
+    Case* case_struct;
 } STYPE;
 
 #define YYSTYPE STYPE
