@@ -1,5 +1,6 @@
 %{
     #include "parser_funcs.hpp"
+    #include <stdlib.h>
 
 	using namespace output;
 
@@ -19,6 +20,7 @@
     string frame_pointer;
     int args_amount;
     bool return_happened = false;
+    int curr_switch_num;
 
 
 %}
@@ -86,7 +88,6 @@
 %type<expList> ExpList;
 %type<exp> Call;
 %type<id> ID;
-%type<exp> NUM;
 
 /* TODO add all the new types */
 %type<label> MarkInIF;
@@ -138,7 +139,7 @@ FuncDecl    :   RetType ID LPAREN Formals RPAREN                            { re
 
                 Statements RBRACE                                           {
                                                                                 symbolTable.close_scope();
-                                                                                if(return_happened == false) {
+                                                                                if(1) {
                                                                                     if(curr_func_ret_type == "VOID") {
                                                                                         buffer.emit("ret void");
                                                                                     }
@@ -342,28 +343,39 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           {
                                                                                 during_switch++;
                                                                             }
                     LBRACE OpenScope CaseList RBRACE CloseScope             {   
-                                                                                $$ = new Block();
 
-                                                                                buffer.bpatch($4->m_nextList, buffer.genLabel());
-                                                                                string switch_cmd = "switch i32 " +  to_string($3->m_val) + ", ";
+                                                                                $$ = new Block();
+                                                                                $$->m_nextList = CodeBuffer::merge($$->m_nextList, CodeBuffer::makelist({$9->last_case->jump_to, FIRST}));
+                                                                                
+
+                                                                                string switch_cmd = "switch i32 " +  $3->m_reg + ", ";
                                                                                 if ($9->default_case != nullptr)
                                                                                 {
-                                                                                    switch_cmd += "label " + $9->default_case->m_label + " [ ";
+                                                                                    switch_cmd += "label %" + $9->default_case->m_label + " [ ";
+                                                                                    $$->m_continueList = CodeBuffer::merge($$->m_continueList, $9->default_case->statements->m_continueList);
+                                                                                    $$->m_breakList = CodeBuffer::merge($$->m_breakList, $9->default_case->statements->m_breakList);
                                                                                 }
                                                                                 else{
                                                                                     switch_cmd += "label @ [ ";
+                                                                                    
                                                                                 }
+
                                                                                 while(!$9->case_stack.empty()) {
                                                                                     Case* c = $9->case_stack.top();
-                                                                                    switch_cmd += "i32 " + to_string(c->m_val) + ", label " + c->m_label + " ";
+                                                                                    switch_cmd += "i32 " + to_string(c->m_val) + ", label %" + c->m_label + " ";
                                                                                     $$->m_continueList = CodeBuffer::merge($$->m_continueList, c->statements->m_continueList);
                                                                                     $$->m_breakList = CodeBuffer::merge($$->m_breakList, c->statements->m_breakList);
-                                                                                    $$->m_continueList = CodeBuffer::merge($$->m_continueList, c->statements->m_continueList);
+                                                                                    // $$->m_nextList = CodeBuffer::merge($$->m_nextList, c->statements->m_nextList);
 
                                                                                     $9->case_stack.pop();
-
                                                                                 }
                                                                                 switch_cmd += "]";
+
+
+                                                                                int pre_switch = buffer.emit("br label @");
+                                                                                string switch_label = buffer.genLabel();
+                                                                                buffer.bpatch(CodeBuffer::makelist({pre_switch, FIRST}), switch_label);
+                                                                                buffer.bpatch($4->m_nextList, switch_label);
 
                                                                                 int address = buffer.emit(switch_cmd);
 
@@ -375,6 +387,7 @@ Statement       :   LBRACE OpenScope Statements RBRACE CloseScope           {
                                                                                 string label = buffer.genLabel();
                                                                                 buffer.bpatch($$->m_nextList, label);
 
+
                                                                                 during_switch--;
                                                                             }
 
@@ -385,6 +398,7 @@ MarkInIF    :  /* epsilon */                                                {
 
 
 Call        :   ID LPAREN ExpList RPAREN                                    {
+                                                                                // buffer.emit("inside call");
                                                                                 FuncSymbol* f = get_func($1->m_name, $3->m_typeList, symbolTable);
                                                                                 $$ = new Exp(f->return_type);
                                                                                 if ($1->m_name == "print") {
@@ -409,16 +423,21 @@ ExpList     :   Exp                                                         {
                                                                               if ($1->m_type == "BOOL") {
                                                                                   exp_to_bool($1, buffer);
                                                                               }
+                                                                              // buffer.emit("last exp");
                                                                             }
-            |   Exp COMMA ExpList                                           {
-                                                                                $$ = new ExpList();
-                                                                                $$->m_typeList = $3->m_typeList;
-                                                                                $$->m_typeList.push_back($1->m_type);
-                                                                                $$->m_exp = $3->m_exp;
-                                                                                $$->m_exp.push_back($1);
+            |   Exp COMMA                                                   {
+                                                                                // buffer.emit("some exp start");
                                                                                 if ($1->m_type == "BOOL") {
                                                                                     exp_to_bool($1, buffer);
                                                                                 }
+                                                                                // buffer.emit("some exp end");
+                                                                            }
+                ExpList                                                     {
+                                                                                $$ = new ExpList();
+                                                                                $$->m_typeList = $4->m_typeList;
+                                                                                $$->m_typeList.push_back($1->m_type);
+                                                                                $$->m_exp = $4->m_exp;
+                                                                                $$->m_exp.push_back($1);
                                                                             }
 
 Type        :   INT                                                         { $$ = new Exp("INT"); }
@@ -529,18 +548,38 @@ CaseList         :   CaseDecl CaseList                                      {
                                                                                 $$ = new CaseStack($2->case_stack);
                                                                                 $$->case_stack.push($1);
                                                                                 $$->m_nextList = CodeBuffer::merge($1->statements->m_nextList, $2->m_nextList);
+                                                                                $$->last_case = $2->last_case;
+                                                                                $$->default_case = $2->default_case;
                                                                             }
                  |   CaseDecl                                               { 
                                                                                 $$ = new CaseStack();
                                                                                 $$->case_stack.push($1);
-                                                                                $$->default_case  = nullptr;
+                                                                                $$->last_case = $1;
+                                                                                $$->last_case->jump_to = buffer.emit("br label @");
                                                                             }
-                 |   DEFAULT COLON M Statements                             {   
+                 |   DEFAULT COLON N M Statements                           {   
+                                                                                buffer.bpatch($3->m_nextList, $4->m_label);
                                                                                 $$ = new CaseStack();
-                                                                                $$->default_case  = new Case(0, $3->m_label, $4);
+                                                                                $$->default_case  = new Case(0, $4->m_label, $5->m_nextList, $5->m_breakList, $5->m_continueList);
+                                                                                $$->last_case = $$->default_case;
+                                                                                $$->last_case->jump_to = buffer.emit("br label @");
+
+
+                                                                                // int address2 = buffer.emit("br label @");
+                                                                                // $$->m_nextList = CodeBuffer::merge($$->m_nextList, CodeBuffer::makelist({address2, FIRST}));
+                                                                                // string label = buffer.genLabel();
+                                                                                // buffer.bpatch($$->m_nextList, label);
                                                                             }
 
-CaseDecl        :   CASE NUM COLON M Statements                             {   $$ = new Case($2->m_val, $4->m_label, $5); }
+CaseDecl        :   CASE NUM                                                {   curr_switch_num = yylval.val; } 
+                    COLON N M Statements                                    {   
+                                                                                buffer.bpatch($5->m_nextList, $6->m_label);
+                                                                                $$ = new Case(curr_switch_num, $6->m_label, $7->m_nextList, $7->m_breakList, $7->m_continueList);
+                                                                                int address2 = buffer.emit("br label @");
+                                                                                $$->statements->m_nextList = CodeBuffer::merge($$->statements->m_nextList, CodeBuffer::makelist({address2, FIRST})); 
+                                                                                string label = buffer.genLabel();
+                                                                                buffer.bpatch($$->statements->m_nextList, label);
+                                                                            }
 
 
 %%

@@ -121,14 +121,14 @@ struct Case
 {
     Block* statements;
     string m_label;
+    int jump_to;
     int m_val;
-    Case(int arg_m_val, string arg_m_label, Block* arg_statements) {
+    Case(int arg_m_val, string arg_m_label, const vector<pair<int,BranchLabelIndex>>& next_list, const vector<pair<int,BranchLabelIndex>>& break_list, const vector<pair<int,BranchLabelIndex>>& continue_list) {
 
         this->statements = new Block();
-        this->statements->m_nextList = arg_statements->m_nextList;
-        this->statements->m_breakList = arg_statements->m_breakList;
-        this->statements->m_continueList = arg_statements->m_continueList;
-
+        this->statements->m_nextList = vector<pair<int,BranchLabelIndex>>(next_list);
+        this->statements->m_breakList = vector<pair<int,BranchLabelIndex>>(break_list);
+        this->statements->m_continueList = vector<pair<int,BranchLabelIndex>>(continue_list);
         this->m_label =arg_m_label;
         this->m_val = arg_m_val;
     }
@@ -139,10 +139,16 @@ struct CaseStack
 {
     std::stack<Case*> case_stack;
     Case* default_case;
+    Case* last_case;
+
     vector<pair<int,BranchLabelIndex>> m_nextList;
-    CaseStack() {}
+    CaseStack() {
+        this->default_case = nullptr;
+    }
     CaseStack(std::stack<Case*> arg_case_stack) {
-        this->case_stack = arg_case_stack;
+        this->case_stack = std::stack<Case*>(arg_case_stack);
+        this->default_case = nullptr;
+
     }
 
     

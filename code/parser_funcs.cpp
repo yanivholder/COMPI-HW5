@@ -175,6 +175,8 @@ void exp_to_bool(Exp *exp, CodeBuffer& buffer) {
     buffer.emit(exp->m_reg + " = phi i32 [1, %" + true_label + "], [0, %" + false_label + "]");
     buffer.bpatch(CodeBuffer::makelist({true_address, FIRST}), end_label);
     buffer.bpatch(CodeBuffer::makelist({false_address, FIRST}), end_label);
+    // buffer.bpatch(CodeBuffer::makelist({shit_address, FIRST}), true_label);
+
     buffer.bpatch(exp->m_trueList, true_label);
     buffer.bpatch(exp->m_falseList, false_label);
 }
