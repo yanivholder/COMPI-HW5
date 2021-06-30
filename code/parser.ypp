@@ -61,18 +61,13 @@
 %left OR
 %left AND
 
-%left RELOP_EQ
-%left RELOP_NOT_EQ
+%left RELOP_EQ RELOP_NOT_EQ 
 
-%nonassoc RELOP_LT;
-%nonassoc RELOP_GT;
-%nonassoc RELOP_LTE;
-%nonassoc RELOP_GTE;
+%nonassoc RELOP_LT RELOP_GT RELOP_LTE RELOP_GTE
 
-%left BINOP_ADD;
-%left BINOP_SUB;
-%left BINOP_MUL;
-%left BINOP_DIV;
+
+%left BINOP_ADD BINOP_SUB
+%left BINOP_MUL BINOP_DIV
 
 %right NOT
 
